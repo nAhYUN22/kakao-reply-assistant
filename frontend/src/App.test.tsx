@@ -5,7 +5,7 @@ import { App } from './App';
 import { api } from './api';
 import type { Job, RuntimeState } from './types';
 
-vi.mock('./api', () => ({ api: { state: vi.fn(), reconnect: vi.fn(), start: vi.fn(), message: vi.fn(), advance: vi.fn(), pause: vi.fn(), detail: vi.fn(), storage: vi.fn(), deleteBody: vi.fn() } }));
+vi.mock('./api', () => ({ api: { state: vi.fn(), reconnect: vi.fn(), start: vi.fn(), message: vi.fn(), advance: vi.fn(), pause: vi.fn(), detail: vi.fn(), storage: vi.fn(), deleteBody: vi.fn(), kakaoStatus: vi.fn(), kakaoCatalog: vi.fn(), kakaoVerify: vi.fn() } }));
 
 const base: RuntimeState = {
   transport: 'mock', mode: 'off', live_send_enabled: false, now: '2026-11-20T03:00:00Z',
@@ -15,7 +15,7 @@ const base: RuntimeState = {
 const job: Job = { job_id: 'synthetic-job-1', state: 'PENDING', reason_codes: [], due_at: '2026-11-20T03:10:00Z', created_at: base.now, updated_at: base.now, incoming_count: 1, attempt_count: 0 };
 const withState = (fields: Partial<RuntimeState>): RuntimeState => ({ ...base, ...fields });
 
-beforeEach(() => { vi.resetAllMocks(); vi.mocked(api.state).mockResolvedValue(base); vi.mocked(api.storage).mockResolvedValue({ schema_version: 2, body_storage: 'memory_only', raw_retention_days: 7 }); });
+beforeEach(() => { vi.resetAllMocks(); vi.mocked(api.state).mockResolvedValue(base); vi.mocked(api.storage).mockResolvedValue({ schema_version: 2, body_storage: 'memory_only', raw_retention_days: 7 }); vi.mocked(api.kakaoStatus).mockResolvedValue({ installed: false }); });
 
 async function ready() { render(<App />); await screen.findByText('로컬 서버 연결됨'); }
 

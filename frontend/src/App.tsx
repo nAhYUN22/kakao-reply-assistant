@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api } from './api';
+import { KakaoDiagnostics } from './KakaoDiagnostics';
 import type { JobDetail, MessageOrigin, RuntimeState, StorageStatus } from './types';
 
 const states: Record<string, string> = {
@@ -134,13 +135,13 @@ export function App() {
       <div className="workspace-label">내 작업 공간</div>
       <a className="nav-item selected" href="#main"><span aria-hidden="true">◈</span> 모의 대화 <span className="nav-dot" /></a>
       <a className="nav-item" href="#history"><span aria-hidden="true">◷</span> 답장 이력</a>
-      <div className="sidebar-bottom"><span className="local-indicator" /> 내 Mac에서 실행<div>합성 데이터 전용 · M1</div></div>
+      <div className="sidebar-bottom"><span className="local-indicator" /> 내 Mac에서 실행<div>모의 답장 · 읽기 진단</div></div>
     </aside>
     <main id="main">
       <header className="topbar"><div className="breadcrumb">작업 공간 <span>/</span> <strong>모의 대화</strong></div><span className="connection"><span className={state && !error ? 'dot green' : 'dot'} />{state && !error ? '로컬 서버 연결됨' : error ? '연결 / 요청 확인 필요' : '서버 연결 중'}</span></header>
       <div className="content">
         <div className="page-heading"><div><div className="eyebrow">REPLY PLAYGROUND</div><h1>답장을 미리 경험해 보세요<span>.</span></h1><p>메시지 한 통에서 답장까지, 원하는 속도로 확인하세요.</p></div><button className="stop-button" disabled={!state || stopping} onClick={() => void act(api.pause, '중지했습니다. 아직 발송하지 않은 작업을 취소했습니다.', true)}><span aria-hidden="true">■</span> {stopping ? '중지 요청 중…' : '즉시 중지'}</button></div>
-        <div className="simulation-banner"><span className="banner-icon" aria-hidden="true">✓</span><div><strong>지금은 모의 연결입니다.</strong> 실제 카카오톡이나 외부 AI에 접근하지 않습니다. 합성 문장만 입력해 주세요.</div><span className="tag">MOCK</span></div>
+        <div className="simulation-banner"><span className="banner-icon" aria-hidden="true">✓</span><div><strong>지금은 모의 연결입니다.</strong> 모의 대화는 실제 카카오톡이나 외부 AI에 접근하지 않습니다. 합성 문장만 입력해 주세요.</div><span className="tag">MOCK</span></div>
         {error && <div className="error-box" role="alert"><span>{error}</span><button disabled={busy} onClick={() => void act(reconnect, '현재 상태를 다시 확인했습니다.')}>연결 다시 확인</button></div>}
         <div className="notice" role="status" aria-live="polite">{busy ? '요청을 처리하고 있습니다…' : notice}</div>
         <section className="metrics" aria-label="현재 실행 상태">
@@ -183,6 +184,7 @@ export function App() {
           {jobs.length === 0 ? <div className="empty-state"><Mark small /><h3>첫 번째 답장을 기다리고 있어요</h3><p>모의 모드를 시작하고 합성 메시지를 넣어 보세요.<br />생성·취소·발송 결과가 여기에 쌓입니다.</p></div> : <div className="history-list">{jobs.map(job => <div className="history-row" key={job.job_id}><span className={`history-symbol ${job.state === 'CONFIRMED_LOCAL' ? 'confirmed' : ''}`} aria-hidden="true">{job.state === 'CONFIRMED_LOCAL' ? '✓' : job.state.startsWith('CANCELED') ? '×' : '◷'}</span><div className="history-info"><strong>{states[job.state] ?? job.state}</strong><span>합성 입력 {job.incoming_count}건 · 모의 전송 시도 {job.attempt_count}회{job.reason_codes.length ? ` · ${job.reason_codes.map(code => reasons[code] ?? code).join(', ')}` : ''}</span></div><time dateTime={job.updated_at}>{time(job.updated_at)}</time><button className="button detail-button" disabled={busy || detailBusy === job.job_id} onClick={() => void showDetail(job.job_id)} aria-label={`${states[job.state] ?? job.state} 상세 보기`}>{detailBusy === job.job_id ? '조회 중…' : '상세 보기'}</button></div>)}</div>}
           {detail && <section className="reply-detail" aria-label="답장 상세"><div className="detail-heading"><strong>{states[detail.state] ?? detail.state}</strong><button className="text-button" disabled={busy} onClick={() => { ++detailVersion.current; setDetail(null); setDeleteConfirm(false); }}>닫기</button></div>{detail.reply_text ? <blockquote>{detail.reply_text}</blockquote> : <p>표시할 생성문이 없습니다.</p>}<p className="help-text">모의 결과입니다. 로컬 발신 확인은 상대의 수신이나 읽음 확인을 뜻하지 않습니다.</p>{detail.reply_text && <div style={{ marginTop: 16 }}>{deleteConfirm ? <div className="pause-note" role="group" aria-label="로컬 생성문 삭제 확인"><p>이 작업의 로컬 생성문을 삭제할까요?</p><p>이미 발송한 메시지를 회수하지 않습니다. 발송 시도와 처리 이력은 남고, 아직 발송하지 않은 작업은 취소됩니다.</p><div className="session-controls"><button className="button secondary" disabled={busy} onClick={() => setDeleteConfirm(false)}>취소</button><button className="button dark" disabled={busy} onClick={() => void deleteBody()}>확인하고 삭제</button></div></div> : <button className="button secondary" disabled={busy} onClick={() => setDeleteConfirm(true)}>로컬 생성문 삭제</button>}</div>}<details><summary>진단 정보</summary><dl><dt>작업 ID</dt><dd>{detail.job_id}</dd><dt>상태</dt><dd>{detail.state}</dd><dt>이유 코드</dt><dd>{detail.reason_codes.join(', ') || '없음'}</dd></dl></details></section>}
         </section>
+        <KakaoDiagnostics />
         <footer><span>KakaoReply · 합성 대화 시뮬레이터</span><span>자동 답장에는 <strong>— 부재중 AI 답장</strong> 표시가 붙습니다.</span></footer>
       </div>
     </main>

@@ -1,4 +1,4 @@
-"""Loopback-only synthetic control API; no live transport is constructed."""
+"""Loopback simulator and user-initiated, read-only KakaoTalk checks."""
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -15,6 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import __version__
 from .domain import BINDING_ID, ROOT
 from .engine import Engine
+from .kakao.observation import ReadError
+from .kakao.probe import Probe
 from .storage_setup import journal_from_environment
 
 
@@ -41,11 +43,17 @@ class EmptyInput(StrictInput):
     pass
 
 
-def create_app(db_path: str | None = None, engine: Engine | None = None) -> FastAPI:
+class ReadCheckInput(StrictInput):
+    id: str = Field(min_length=1, max_length=128)
+    one_to_one_confirmed: bool
+
+
+def create_app(db_path: str | None = None, engine: Engine | None = None, *, probe: Probe | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         application.state.engine = engine or Engine(journal_from_environment(db_path or os.getenv("KAKAOREPLY_DB_PATH", str(ROOT / "data/mock.sqlite"))))
         application.state.token = secrets.token_urlsafe(32)
+        application.state.probe = probe if probe is not None else Probe()
         try:
             yield
         finally:
@@ -99,6 +107,36 @@ def create_app(db_path: str | None = None, engine: Engine | None = None) -> Fast
     @application.get("/api/state")
     async def state(request: Request):
         return request.app.state.engine.state()
+
+    @application.exception_handler(ReadError)
+    async def read_error(request, error):
+        # Upstream diagnostics can contain room titles or excerpts.
+        public_codes = {
+            "BINARY_UNAVAILABLE", "PROBE_BUSY", "CATALOG_LIMIT_REACHED", "CATALOG_FAILED",
+            "AMBIGUOUS_TARGET", "BINDING_CHANGED", "BINDING_REQUIRES_CONFIRMATION",
+            "MCP_READ_FAILED", "MCP_CONNECTION_FAILED", "INVALID_CATALOG",
+            "READ_CAPABILITY_MISSING", "UNSUPPORTED_READ_SCHEMA", "READ_FAILED",
+        }
+        reason = str(error)
+        if reason == "SELECTION_EXPIRED":
+            reason = "BINDING_CHANGED"
+        if reason in {"CATALOG_TIMEOUT", "CATALOG_TOO_LARGE", "INVALID_CATALOG"}:
+            reason = "CATALOG_FAILED"
+        return JSONResponse({"detail": reason if reason in public_codes else "READ_CHECK_FAILED"}, status_code=409)
+
+    @application.get("/api/kakao/status")
+    async def kakao_status(request: Request):
+        return {"installed": request.app.state.probe.installed()}
+
+    @application.post("/api/kakao/catalog")
+    async def kakao_catalog(body: EmptyInput, request: Request):
+        return await request.app.state.probe.catalog()
+
+    @application.post("/api/kakao/verify")
+    async def kakao_verify(body: ReadCheckInput, request: Request):
+        if not body.one_to_one_confirmed:
+            raise ReadError("BINDING_REQUIRES_CONFIRMATION")
+        return await request.app.state.probe.verify(body.id)
 
     @application.get("/api/storage")
     async def storage(request: Request):

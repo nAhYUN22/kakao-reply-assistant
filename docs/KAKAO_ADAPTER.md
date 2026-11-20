@@ -275,7 +275,7 @@ MCP의 도구 목록 확인만으로 자동 답장 제품 전체가 작동한다
 - [kmsg ARCHITECTURE](https://github.com/channprj/kmsg/blob/main/ARCHITECTURE.md): 접근성 기반 구조와 로컬 식별·watch 방식입니다.
 - upstream 자료의 설명과 본 프로젝트의 권고 정책을 구별합니다. 설치 버전과 다른 동작은 구현 중 증거를 남겨 갱신합니다.
 
-## M2 구현 범위 (2026-11-20)
+## M2 기반 구현 당시 범위 (2026-11-20)
 
 `backend/kakaoreply/kakao`에 실제 SDK stdio 읽기 전용 클라이언트와 합성 관측 파서를 구현했습니다. `tests/kakao`의 가짜 MCP subprocess 및 `make smoke-m2`로 검증하며 실제 kmsg 설치/읽기는 수행하지 않았습니다.
 
@@ -286,3 +286,8 @@ MCP의 도구 목록 확인만으로 자동 답장 제품 전체가 작동한다
 - 현재 엔진은 live 이벤트를 받지 않습니다. 읽기 orchestration·사용자 확인 UI·실작성자/bot echo 검증·실시간 polling·전역 dispatcher·실전송은 후속입니다.
 
 SDK JSONL 호환 근거는 [고정 MCP 소스](https://github.com/channprj/kmsg/blob/54cbff790b409214735ef365a621d791034fe500/Sources/kmsg/Commands/MCPServerCommand.swift)입니다. 위 watch JSON 표는 CLI watch에 관한 것이며 MCP wire와 구분합니다.
+
+
+## 설치본과 로컬 읽기 진단
+
+현재 진단 경로는 설치 여부 조회, 사용자 요청에 따른 CLI 목록 조회, 1:1 대상 확인 후 MCP 두 번 읽기의 순서입니다. 로컬 API는 세션 토큰과 기존 Origin/Host 검사를 적용합니다. 목록 응답에는 임시 선택 ID와 제목, 읽기 응답에는 상태와 건수만 포함합니다. 진단에서 실제 전송 도구 호출은 제공하지 않습니다. kmsg 1.260921.0에서 버전·도움말·MCP 초기화·tools/list 읽기 스키마를 확인했습니다. 사용자 기기의 권한과 선택된 대화에 대한 검증 상태는 PROGRESS에 기록합니다.

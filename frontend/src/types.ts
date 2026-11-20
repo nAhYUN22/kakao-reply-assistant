@@ -32,3 +32,11 @@ export interface StorageStatus {
   body_storage: 'aead' | 'memory_only';
   raw_retention_days: number;
 }
+
+export interface KakaoStatus { installed: boolean }
+export interface KakaoChoice { id: string; title: string }
+export interface KakaoReadResult {
+  baseline_count: number;
+  new_count: number;
+  status: string;
+}
