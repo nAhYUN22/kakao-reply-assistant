@@ -10,7 +10,7 @@
 | 실제 Mac 카카오톡 읽기 | 미실행. kmsg 미설치(PATH에서 없음), 계정·권한·대상 미확인 |
 | 실제 메시지 전송 | 미실행, 0회. 이번 요청에서는 금지 |
 | 자동 모드 실기기 검증 | 미실행 |
-| GitHub | main Git 초기화, origin 연결 및 빈 원격 확인. 업로드 결과는 아래 기록 |
+| GitHub | main Git 초기화, origin 연결, 첫 커밋 8ac9104 업로드 완료; origin/main 추적 설정 |
 
 ## 구현한 동작
 
@@ -61,3 +61,14 @@ Starlette가 TestClient의 httpx 사용 중단 예정 경고 1개를 표시합�
 M2–M5 전체는 완료하지 않았습니다. 실제 MCP/CLI, live SendGate/GUI 결과 확인, 암호화·Keychain·보존/삭제, 실시간 타이머·절전 복구, 실제 모델·말투·사실 메모리·전체 설정 화면이 남습니다. 현재 MockLLM은 결정적인 합성 응답이며 실제 말투/생성 품질을 검증하지 않았습니다.
 
 다음 세션은 HANDOFF를 읽고 M2를 진행합니다. 실제 전송은 대상·내용·횟수의 별도 승인 범위가 있을 때만 검증합니다. 현재 인수 시나리오 49개 전부를 통과했다고 보고하지 않습니다.
+
+
+## GitHub 및 최종 실행 상태
+
+- `git init -b main`, `git remote add origin https://github.com/nAhYUN22/kakao-reply-assistant.git` 완료.
+- `git ls-remote origin`으로 기존 원격 브랜치가 없는 것을 확인했습니다.
+- 구현 커밋 `8ac9104` (`feat: implement M0 M1 synthetic reply simulator`) 생성 후 `git push -u origin main` 성공.
+- 후속 문서 커밋은 업로드 결과만 기록합니다. `git log`와 원격 main으로 최종 커밋을 확인할 수 있습니다.
+- 소스/문서/합성 fixture만 업로드했으며 `.venv`, `node_modules`, 빌드 산출물, DB, 로그, 비밀 파일은 제외했습니다.
+- 최종 서버는 `KAKAOREPLY_DB_PATH=/private/tmp/kakaoreply-browser-m1.sqlite`로 127.0.0.1:8765에서 실행했습니다. 재시작 후 off이며 브라우저 합성 이력은 남고 이전 생성문은 메모리 소멸로 상세 조회 시 없어집니다. 화면이 이전 세션 토큰을 갖고 있으면 새로고침 또는 연결 다시 확인을 사용합니다.
+- `git diff --cached --check`에서 기존 Markdown 줄 끝 공백 2건을 발견해 정리 후 통과했습니다.

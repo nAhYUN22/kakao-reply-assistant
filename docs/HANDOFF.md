@@ -52,3 +52,6 @@ Python 44개, UI/API 10개 통과; build 및 API smoke 통과. 인앱 브라우�
 실제 Mac 읽기·실제 전송·자동 실운영 모두 미실행입니다. 이번 개발 요청은 실제 사람에게 메시지를 보내는 권한을 포함하지 않습니다. 개인 전역 Codex 설정도 바꾸지 마세요.
 
 Git `main`과 origin은 사용자 지정 https://github.com/nAhYUN22/kakao-reply-assistant.git 에 연결되어 있습니다. 최신 업로드 결과와 커밋은 PROGRESS 및 `git status`/`git log`로 확인하세요. 원격 이력을 강제로 덮어쓰지 않습니다.
+
+
+최초 구현 커밋 `8ac9104`는 원격 `main`에 업로드했고 `origin/main` 추적 연결을 설정했습니다. 현재 실행해 둔 브라우저 데모 서버는 `/private/tmp/kakaoreply-browser-m1.sqlite`를 사용합니다. 다음 작업에서 8765 포트가 이미 사용 중이면 기존 데모 서버를 확인해 정상 종료한 뒤 재실행하세요. 재시작 후 UI의 기존 토큰은 새로고침으로 갱신합니다.
