@@ -69,3 +69,20 @@ def test_probe_error_response_drops_upstream_text(local):
     response = client.post("/api/kakao/verify", json={"id": "stale", "one_to_one_confirmed": True})
     assert response.status_code == 409
     assert response.json() == {"detail": "READ_CHECK_FAILED"}
+
+
+@pytest.mark.parametrize(("reason", "public"), [
+    ("CATALOG_TIMEOUT", "CATALOG_TIMEOUT"),
+    ("CATALOG_TOO_LARGE", "CATALOG_TOO_LARGE"),
+    ("INVALID_PAYLOAD", "INVALID_CATALOG"),
+    ("SYNTHETIC_PRIVATE_DIAGNOSTIC", "READ_CHECK_FAILED"),
+])
+def test_catalog_errors_distinguish_failure_from_empty_result(local, monkeypatch, reason, public):
+    client, probe = local
+    async def failed_catalog():
+        raise ReadError(reason)
+    monkeypatch.setattr(probe, "catalog", failed_catalog)
+    client.headers["X-Session-Token"] = client.get("/api/session").json()["token"]
+    response = client.post("/api/kakao/catalog", json={})
+    assert response.status_code == 409
+    assert response.json() == {"detail": public}

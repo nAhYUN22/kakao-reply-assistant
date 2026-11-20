@@ -114,6 +114,7 @@ def create_app(db_path: str | None = None, engine: Engine | None = None, *, prob
         # Upstream diagnostics can contain room titles or excerpts.
         public_codes = {
             "BINARY_UNAVAILABLE", "PROBE_BUSY", "CATALOG_LIMIT_REACHED", "CATALOG_FAILED",
+            "CATALOG_TIMEOUT", "CATALOG_TOO_LARGE",
             "AMBIGUOUS_TARGET", "BINDING_CHANGED", "BINDING_REQUIRES_CONFIRMATION",
             "MCP_READ_FAILED", "MCP_CONNECTION_FAILED", "INVALID_CATALOG",
             "READ_CAPABILITY_MISSING", "UNSUPPORTED_READ_SCHEMA", "READ_FAILED",
@@ -121,8 +122,8 @@ def create_app(db_path: str | None = None, engine: Engine | None = None, *, prob
         reason = str(error)
         if reason == "SELECTION_EXPIRED":
             reason = "BINDING_CHANGED"
-        if reason in {"CATALOG_TIMEOUT", "CATALOG_TOO_LARGE", "INVALID_CATALOG"}:
-            reason = "CATALOG_FAILED"
+        if reason == "INVALID_PAYLOAD" and request.url.path == "/api/kakao/catalog":
+            reason = "INVALID_CATALOG"
         return JSONResponse({"detail": reason if reason in public_codes else "READ_CHECK_FAILED"}, status_code=409)
 
     @application.get("/api/kakao/status")

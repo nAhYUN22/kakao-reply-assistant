@@ -28,6 +28,8 @@ from .observation import BindingVerifier, ReadError, SnapshotScanner, _catalog
 
 CATALOG_LIMIT = 1000
 MAX_CATALOG_BYTES = 512_000
+DEFAULT_MCP_TIMEOUT_SECONDS = 12
+DEFAULT_CATALOG_TIMEOUT_SECONDS = 30
 _LOCK_PATH = Path('/tmp') / f'kakaoreply-kakao-ui-{os.getuid()}.lock'
 _SAFE_ERRORS = frozenset({
     'BINARY_UNAVAILABLE', 'PROBE_BUSY', 'UI_LOCK_UNAVAILABLE', 'INVALID_CONFIGURATION',
@@ -143,13 +145,23 @@ async def _stop_process(process):
 
 class Probe:
     def __init__(self, executable: str | None = None, *, poll_seconds: float = 3,
-                 timeout_seconds: float = 12, clock=None, sleep=None):
+                 timeout_seconds: float | None = None,
+                 catalog_timeout_seconds: float | None = None, clock=None, sleep=None):
+        # Large AX catalog scans can take longer than a single bounded MCP read.
+        # Preserve explicit timeout_seconds overrides (including synthetic tests)
+        # for both operations unless a separate catalog override is supplied.
+        read_timeout = DEFAULT_MCP_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        catalog_timeout = (DEFAULT_CATALOG_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds)
+        if catalog_timeout_seconds is not None:
+            catalog_timeout = catalog_timeout_seconds
         if (not math.isfinite(poll_seconds) or not 0 <= poll_seconds <= 5
-                or not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 30):
+                or not math.isfinite(read_timeout) or not 0 < read_timeout <= 30
+                or not math.isfinite(catalog_timeout) or not 0 < catalog_timeout <= 60):
             raise ReadError('INVALID_CONFIGURATION')
         self._executable = executable
         self._poll_seconds = poll_seconds
-        self._timeout = timeout_seconds
+        self._timeout = read_timeout
+        self._catalog_timeout = catalog_timeout
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._sleep = sleep or asyncio.sleep
         self._choices: dict[str, str] = {}
@@ -177,7 +189,7 @@ class Probe:
     async def _read_catalog(self, binary: str) -> dict:
         process = None
         try:
-            async with asyncio.timeout(self._timeout):
+            async with asyncio.timeout(self._catalog_timeout):
                 process = await asyncio.create_subprocess_exec(
                     binary, 'chats', '--json', '--limit', str(CATALOG_LIMIT),
                     stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,

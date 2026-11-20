@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { KakaoDiagnostics } from './KakaoDiagnostics';
@@ -116,6 +116,7 @@ describe('대화 이름 검색과 창 열기', () => {
     expect(api.kakaoCatalog).toHaveBeenCalledTimes(1);
     expect(api.kakaoVerify).not.toHaveBeenCalled();
     expect(screen.getByLabelText('읽기 진단할 대화')).toHaveValue(choices[0].id);
+    expect(within(screen.getByRole('form', { name: '대화 이름 검색' })).getByText(choices[0].title)).toBeVisible();
     expect(screen.getByRole('checkbox', { name: '읽기 확인 시 선택한 대화창 열기 허용' })).toBeChecked();
     expect(screen.getByText(/미리 창을 열어둘 필요는 없습니다/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '대화창을 열고 읽기 확인' })).toBeDisabled();
@@ -180,6 +181,35 @@ describe('대화 이름 검색과 창 열기', () => {
     await user.click(screen.getByRole('button', { name: '진단 닫기' }));
     await user.click(screen.getByRole('button', { name: '진단 열기' }));
     expect(screen.getByLabelText('대화 이름으로 찾기')).toHaveValue('');
+    expect(api.kakaoVerify).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('이름 검색 진행과 조회 오류', () => {
+  it('이름 검색창 바로 아래에서 조회 진행을 알리고 실패와 이름 미일치를 구분한다', async () => {
+    let fail!: (reason: Error) => void;
+    vi.mocked(api.kakaoCatalog).mockReturnValue(new Promise((_, reject) => { fail = reject; }));
+    const user = await open();
+    await user.type(screen.getByLabelText('대화 이름으로 찾기'), choices[0].title);
+    await user.click(screen.getByRole('button', { name: '이름으로 대화 찾기' }));
+    const searchForm = within(screen.getByRole('form', { name: '대화 이름 검색' }));
+    expect(searchForm.getByText(/아직 이름 일치 여부를 확인하지 않았습니다/)).toBeVisible();
+    await act(async () => fail(new Error('대화 목록 조회 시간이 초과되었습니다. 이름 일치 여부는 확인하지 못했습니다.')));
+    expect(searchForm.getByRole('alert')).toHaveTextContent('대화 목록 조회를 완료하지 못해 이름을 검색하지 못했습니다.');
+    expect(searchForm.getByRole('alert')).toHaveTextContent('대화 목록 조회 시간이 초과되었습니다.');
+    expect(screen.queryByText(/이름이 정확히 일치하는 대화가 없습니다/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('읽기 진단할 대화')).not.toBeInTheDocument();
+    expect(api.kakaoVerify).not.toHaveBeenCalled();
+  });
+
+  it('목록 조회가 성공한 뒤 이름이 없을 때만 검색창 아래에 미일치를 표시한다', async () => {
+    const user = await open();
+    await user.type(screen.getByLabelText('대화 이름으로 찾기'), '일치하지 않는 합성 이름');
+    await user.click(screen.getByRole('button', { name: '이름으로 대화 찾기' }));
+    const searchForm = within(screen.getByRole('form', { name: '대화 이름 검색' }));
+    expect(searchForm.getByRole('alert')).toHaveTextContent('이름이 정확히 일치하는 대화가 없습니다.');
+    expect(searchForm.queryByText(/목록 조회를 완료하지 못해/)).not.toBeInTheDocument();
     expect(api.kakaoVerify).not.toHaveBeenCalled();
   });
 });

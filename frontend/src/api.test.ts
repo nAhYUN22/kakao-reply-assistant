@@ -80,7 +80,7 @@ describe('카카오 읽기 진단 API', () => {
     timeout.mockRestore();
   });
 
-  it.each([['PROBE_BUSY', '다른 읽기 진단이 진행 중'], ['BINARY_UNAVAILABLE', 'kmsg 실행 파일을 찾지 못했습니다'], ['AMBIGUOUS_TARGET', '대상을 명확하게 구분할 수 없습니다'], ['BINDING_CHANGED', '선택한 대화 정보가 변경되었습니다'], ['CATALOG_LIMIT_REACHED', '대화 목록 한도'], ['CATALOG_FAILED', '대화 목록을 읽지 못했습니다'], ['MCP_READ_FAILED', '대상 대화의 별도 창 표시'], ['READ_CHECK_FAILED', '대화 읽기 결과를 확인하지 못했습니다']])('공개 오류 코드 %s를 고정된 한국어 안내로 변환한다', async (code, expected) => {
+  it.each([['PROBE_BUSY', '다른 읽기 진단이 진행 중'], ['BINARY_UNAVAILABLE', 'kmsg 실행 파일을 찾지 못했습니다'], ['AMBIGUOUS_TARGET', '대상을 명확하게 구분할 수 없습니다'], ['BINDING_CHANGED', '선택한 대화 정보가 변경되었습니다'], ['CATALOG_LIMIT_REACHED', '대화 목록 한도'], ['CATALOG_FAILED', '원인은 확인되지 않았습니다'], ['CATALOG_TIMEOUT', '대화 목록 조회 시간이 초과되었습니다'], ['CATALOG_TOO_LARGE', '허용된 크기를 넘었습니다'], ['INVALID_CATALOG', '불완전하거나 올바르지 않아'], ['MCP_READ_FAILED', '대상 대화의 별도 창 표시'], ['READ_CHECK_FAILED', '대화 읽기 결과를 확인하지 못했습니다']])('공개 오류 코드 %s를 고정된 한국어 안내로 변환한다', async (code, expected) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response({ token: 'synthetic-session-token' })).mockResolvedValueOnce(response({ detail: code }, 409)));
     const { api } = await import('./api');
     await expect(api.kakaoVerify('synthetic-room')).rejects.toThrow(expected);

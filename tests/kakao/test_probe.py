@@ -34,6 +34,8 @@ if sys.argv[1:] == ['chats', '--json', '--limit', '1000']:
     if mode == 'hang':
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         time.sleep(30)
+    if mode == 'slow':
+        time.sleep(.5)
     if mode == 'oversize':
         print('SYNTHETIC_PRIVATE' * 40000)
     elif mode == 'bad':
@@ -197,8 +199,37 @@ async def test_timeout_kills_term_ignoring_catalog_and_unlocks(fake):
         await probe.catalog()
     with pytest.raises(ProcessLookupError):
         os.kill(int((fake.parent / 'pid').read_text()), 0)
+    assert (fake.parent / 'catalog_count').read_text() == '1'
     (fake.parent / 'mode').write_text('ok')
     assert (await probe.catalog())['choices']
+
+
+async def test_default_catalog_deadline_is_separate_from_mcp(fake, monkeypatch):
+    deadlines = []
+    original_timeout = asyncio.timeout
+    def observe_deadline(seconds):
+        deadlines.append(seconds)
+        return original_timeout(seconds)
+    monkeypatch.setattr(module.asyncio, 'timeout', observe_deadline)
+    probe = Probe(str(fake))
+    assert (await probe.catalog())['choices']
+    assert deadlines[0] == 30
+    assert probe._timeout == 12
+    assert (fake.parent / 'catalog_count').read_text() == '1'
+
+
+async def test_catalog_override_can_outlast_short_mcp_deadline_without_retry(fake):
+    (fake.parent / 'mode').write_text('slow')
+    probe = Probe(str(fake), timeout_seconds=.1, catalog_timeout_seconds=3)
+    assert (await probe.catalog())['choices']
+    assert (fake.parent / 'catalog_count').read_text() == '1'
+
+
+@pytest.mark.parametrize('deadline', [0, -1, float('inf'), float('nan'), 61])
+def test_catalog_deadline_remains_bounded(fake, deadline):
+    with pytest.raises(ReadError, match='INVALID_CONFIGURATION'):
+        Probe(str(fake), catalog_timeout_seconds=deadline)
+    assert trace(fake) == []
 
 
 async def test_cancel_catalog_kills_process_and_unlocks(fake):

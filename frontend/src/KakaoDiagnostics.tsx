@@ -63,6 +63,7 @@ function ReadDiagnostics({ enabled }: { enabled: boolean }) {
   const [selected, setSelected] = useState('');
   const [name, setName] = useState('');
   const [lookupNotice, setLookupNotice] = useState<string | null>(null);
+  const [lookupError, setLookupError] = useState<string | null>(null);
   const [allowOpenWindow, setAllowOpenWindow] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState<'catalog' | 'verify' | null>(null);
@@ -77,9 +78,9 @@ function ReadDiagnostics({ enabled }: { enabled: boolean }) {
 
   async function catalog(lookupName?: string) {
     if (!enabled || busy) return;
-    setError(null); setResult(null); setSelected(''); setConfirmed(false); setLookupNotice(null); setAllowOpenWindow(false);
+    setError(null); setLookupError(null); setResult(null); setSelected(''); setConfirmed(false); setLookupNotice(null); setAllowOpenWindow(false);
     if (lookupName !== undefined && !lookupName.trim()) {
-      setError('찾을 대화 이름을 입력해 주세요.');
+      setLookupError('찾을 대화 이름을 입력해 주세요.');
       return;
     }
     setBusy('catalog'); setChoices(null);
@@ -91,14 +92,14 @@ function ReadDiagnostics({ enabled }: { enabled: boolean }) {
           const matches = response.choices.filter(choice => choice.title === lookupName.trim());
           if (matches.length === 1) {
             setSelected(matches[0].id); setAllowOpenWindow(true);
-            setLookupNotice('이름이 정확히 일치하는 대화 1개를 찾았습니다. 대상과 1:1 대화 여부를 확인해 주세요.');
+            setLookupNotice(matches[0].title);
           } else {
-            setError(matches.length === 0 ? '이름이 정확히 일치하는 대화가 없습니다. 카카오톡 대화 목록에 표시된 이름을 확인해 주세요.' : '같은 이름의 대화가 여러 개입니다. 대상을 확정하지 않았습니다. 카카오톡에서 이름을 구분한 뒤 다시 조회해 주세요.');
+            setLookupError(matches.length === 0 ? '이름이 정확히 일치하는 대화가 없습니다. 카카오톡 대화 목록에 표시된 이름을 확인해 주세요.' : '같은 이름의 대화가 여러 개입니다. 대상을 확정하지 않았습니다. 카카오톡에서 이름을 구분한 뒤 다시 조회해 주세요.');
           }
         }
       }
     } catch (err) {
-      if (alive.current) setError(err instanceof Error ? err.message : '대화 목록을 읽지 못했습니다. kmsg 설치·손쉬운 사용 권한·카카오톡 로그인 상태를 확인해 주세요.');
+      if (alive.current) setLookupError(`대화 목록 조회를 완료하지 못해 이름을 검색하지 못했습니다. ${err instanceof Error ? err.message : '원인을 확인할 수 없습니다. 다시 조회해 주세요.'}`);
     } finally { if (alive.current) setBusy(null); }
   }
 
@@ -117,18 +118,22 @@ function ReadDiagnostics({ enabled }: { enabled: boolean }) {
   const resultText = result && Object.hasOwn(readResults, result.status) ? readResults[result.status] : undefined;
   return <div style={{ marginTop: 20 }}>
     <p className="help-text">아래 버튼을 누르면 실제 카카오톡의 대화 목록을 조회합니다. 대화 이름은 이 진단 화면에서만 표시하며, 닫으면 선택과 결과를 지웁니다.</p>
-    <form style={{ marginTop: 16 }} onSubmit={event => { event.preventDefault(); void catalog(name); }}>
+    <form aria-label="대화 이름 검색" style={{ marginTop: 16 }} onSubmit={event => { event.preventDefault(); void catalog(name); }}>
       <label className="field-label" htmlFor="kakao-name-search">대화 이름으로 찾기</label>
-      <input id="kakao-name-search" type="text" value={name} maxLength={200} autoComplete="off" disabled={!enabled || busy !== null} placeholder="카카오톡 대화 목록에 표시된 이름" style={{ width: '100%', padding: '11px 12px', border: '1px solid #dfe3d4', borderRadius: 6, color: '#505b48', background: '#fffefa' }} onChange={event => { setName(event.target.value); setSelected(''); setConfirmed(false); setAllowOpenWindow(false); setResult(null); setError(null); setLookupNotice(null); }} />
+      <input id="kakao-name-search" aria-describedby="kakao-search-feedback" type="text" value={name} maxLength={200} autoComplete="off" disabled={!enabled || busy !== null} placeholder="카카오톡 대화 목록에 표시된 이름" style={{ width: '100%', padding: '11px 12px', border: '1px solid #dfe3d4', borderRadius: 6, color: '#505b48', background: '#fffefa' }} onChange={event => { setName(event.target.value); setSelected(''); setConfirmed(false); setAllowOpenWindow(false); setResult(null); setError(null); setLookupError(null); setLookupNotice(null); }} />
       <p className="help-text">조회한 대화 목록에서 정확히 일치하는 이름 하나만 선택합니다. 연락처 전체 검색은 하지 않습니다.</p>
       <button type="submit" className="button dark" style={{ marginTop: 12 }} disabled={!enabled || busy !== null}>이름으로 대화 찾기</button>
+      <div id="kakao-search-feedback" aria-live="polite">
+        {busy === 'catalog' && <p className="help-text">대화 목록을 조회하고 있습니다. 아직 이름 일치 여부를 확인하지 않았습니다.</p>}
+        {lookupError && <p className="error-box" role="alert">{lookupError}</p>}
+        {lookupNotice && <p className="help-text">선택된 대화: <strong>{lookupNotice}</strong><br />이름이 정확히 일치하는 대화 1개를 찾았습니다. 대상과 1:1 대화 여부를 확인해 주세요.</p>}
+      </div>
     </form>
-    {lookupNotice && <p className="help-text" aria-live="polite">{lookupNotice}</p>}
     <button className="button secondary" style={{ marginTop: 12 }} disabled={!enabled || busy !== null} onClick={() => void catalog()}>{busy === 'catalog' ? '대화 목록 읽는 중…' : choices === null ? '실제 대화 목록 조회' : '대화 목록 다시 조회'}</button>
     {choices !== null && choices.length === 0 && <p className="help-text">표시할 대화가 없습니다. 카카오톡 로그인과 열린 대화를 확인해 주세요.</p>}
     {choices !== null && choices.length > 0 && <div style={{ marginTop: 18 }}>
       <label className="field-label" htmlFor="kakao-read-target">읽기 진단할 대화</label>
-      <select id="kakao-read-target" value={selected} disabled={busy !== null || !enabled} onChange={event => { setSelected(event.target.value); setConfirmed(false); setAllowOpenWindow(false); setLookupNotice(null); setResult(null); setError(null); }}>
+      <select id="kakao-read-target" value={selected} disabled={busy !== null || !enabled} onChange={event => { setSelected(event.target.value); setConfirmed(false); setAllowOpenWindow(false); setLookupNotice(null); setLookupError(null); setResult(null); setError(null); }}>
         <option value="">대화를 직접 선택해 주세요</option>
         {choices.map((choice, index) => <option key={choice.id} value={choice.id} disabled={choices.filter(item => item.title === choice.title).length !== 1}>{choice.title} · 항목 {index + 1}{choices.filter(item => item.title === choice.title).length !== 1 ? ' · 이름 중복' : ''}</option>)}
       </select>
