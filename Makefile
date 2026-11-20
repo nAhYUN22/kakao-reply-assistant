@@ -1,4 +1,4 @@
-.PHONY: install test build serve dev-ui smoke
+.PHONY: install test build serve dev-ui smoke smoke-m2
 
 install:
 	uv sync --locked
@@ -19,3 +19,6 @@ dev-ui:
 
 smoke:
 	.venv/bin/python scripts/smoke.py
+
+smoke-m2:
+	.venv/bin/python scripts/m2_smoke.py

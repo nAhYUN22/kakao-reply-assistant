@@ -1,4 +1,4 @@
-import type { JobDetail, MessageOrigin, RuntimeState } from './types';
+import type { JobDetail, MessageOrigin, RuntimeState, StorageStatus } from './types';
 
 let session: Promise<string> | undefined;
 
@@ -23,11 +23,11 @@ async function json<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 }
 
-async function request<T>(path: string, body?: unknown): Promise<T> {
+async function request<T>(path: string, body?: unknown, method?: 'DELETE'): Promise<T> {
   session ??= json<{ token: string }>('/api/session').then(value => value.token).catch(error => { session = undefined; throw error; });
   const token = await session;
   return json<T>(path, {
-    method: body === undefined ? 'GET' : 'POST',
+    method: method ?? (body === undefined ? 'GET' : 'POST'),
     headers: { 'X-Session-Token': token, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
@@ -35,6 +35,8 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
 
 export const api = {
   state: () => request<RuntimeState>('/api/state'),
+  storage: () => request<StorageStatus>('/api/storage'),
+  deleteBody: (id: string) => request<RuntimeState>(`/api/jobs/${encodeURIComponent(id)}/body`, undefined, 'DELETE'),
   reconnect: () => { session = undefined; return request<RuntimeState>('/api/state'); },
   start: (mode: 'auto' | 'draft') => request<RuntimeState>('/api/simulator/start', { mode }),
   message: (text: string, origin: MessageOrigin) => request<RuntimeState>('/api/simulator/messages', { text, origin }),

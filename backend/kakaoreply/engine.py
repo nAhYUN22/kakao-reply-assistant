@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from .adapters import FakeTransport, MockClock, MockLLM
 from .domain import ACTIVE, BINDING_ID, checked_config, default_config, final_text, in_window, iso, timestamp, validate
-from .storage import Journal
+from .storage import Journal, StorageError
 
 
 class Engine:
@@ -29,6 +29,7 @@ class Engine:
         self.dispatcher = asyncio.Lock()
         self.jobs = self.journal.jobs()
         self.texts: dict[str, str] = {}
+        self.journal.purge_expired(self.clock.now)
         self.pending: list[dict] = []
         self.active_job: str | None = None
         self.epoch = 0
@@ -95,6 +96,11 @@ class Engine:
         if mode not in {"draft", "auto"}:
             raise ValueError("INVALID_MODE")
         async with self.lock:
+            try:
+                self.journal.ensure_key()
+            except StorageError:
+                self._storage_failure()
+                raise
             if any(j["state"] == "DELIVERY_UNKNOWN" for j in self.jobs.values()):
                 raise ValueError("DELIVERY_UNKNOWN_REQUIRES_REVIEW")
             self.epoch += 1
@@ -181,6 +187,10 @@ class Engine:
             return self.state()
 
     def _policy(self, pending: list[dict]) -> str | None:
+        try:
+            self.journal.ensure_key()
+        except StorageError:
+            return "STORAGE_UNAVAILABLE"
         if self.config["mode"] == "off" or self.paused_reason:
             return "NOT_RUNNING"
         if not self.transport.verify_binding(BINDING_ID):
@@ -205,6 +215,11 @@ class Engine:
         async with self.lock:
             self.clock.advance(seconds)
             self.journal.put("now", iso(self.clock.now))
+            self.journal.purge_expired(self.clock.now)
+            for job_id in self.jobs:
+                if (self.clock.now - timestamp(self.jobs[job_id]["created_at"])).days >= self.config["storage"]["raw_retention_days"]:
+                    self.texts.pop(job_id, None)
+                    self.transport.forget_body(job_id)
         await self.run_due()
         return self.state()
 
@@ -227,6 +242,9 @@ class Engine:
                 return
             failure = self._policy(snapshot)
             if failure:
+                if failure == "STORAGE_UNAVAILABLE":
+                    self._storage_failure(job)
+                    return
                 self._transition(job, "SKIPPED_POLICY", [failure])
                 self.pending.clear()
                 self.active_job = None
@@ -260,17 +278,22 @@ class Engine:
                     self.pending.clear()
                     return
                 if decision["action"] != "reply":
+                    if not self._remember_reply(job, decision["reply_text"]):
+                        return
                     self._transition(job, "SKIPPED_POLICY", decision["reason_codes"])
-                    self.texts[job["job_id"]] = decision["reply_text"]
                     self.active_job = None
                     self.pending.clear()
                     return
-                self.texts[job["job_id"]] = text
+                if not self._remember_reply(job, text):
+                    return
                 self._transition(job, "READY", decision["reason_codes"])
                 if self.config["mode"] == "draft":
                     return
                 failure = self._policy(snapshot)
                 if failure:
+                    if failure == "STORAGE_UNAVAILABLE":
+                        self._storage_failure(job)
+                        return
                     self._transition(job, "SKIPPED_POLICY", [failure])
                     self.active_job = None
                     self.pending.clear()
@@ -281,10 +304,14 @@ class Engine:
                     self.active_job = None
                     self.pending.clear()
                     return
-                job["state"] = "DISPATCHING"
-                job["updated_at"] = iso(self.clock.now)
-                job["attempt_count"] = 1
-                if not self.journal.claim(job, iso(self.clock.now), self.session_id):
+                dispatch_job = {**job, "state": "DISPATCHING", "updated_at": iso(self.clock.now), "attempt_count": 1}
+                try:
+                    claimed = self.journal.claim(dispatch_job, iso(self.clock.now), self.session_id)
+                except StorageError:
+                    self._storage_failure(job)
+                    return
+                job.update(dispatch_job)
+                if not claimed:
                     self._transition(job, "DELIVERY_UNKNOWN", ["ATTEMPT_ALREADY_EXISTS"])
                     self.paused_reason = "DELIVERY_UNKNOWN"
                     return
@@ -310,6 +337,28 @@ class Engine:
                 else:
                     self._unknown(job)
 
+    def _remember_reply(self, job, text: str) -> bool:
+        try:
+            if self.journal.encrypted:
+                self.journal.save_body("reply", job["job_id"], text, self.clock.now,
+                                       self.config["storage"]["raw_retention_days"])
+            else:
+                self.texts[job["job_id"]] = text
+            return True
+        except StorageError:
+            self._storage_failure(job)
+            return False
+
+    def _storage_failure(self, job=None):
+        self.config["mode"] = "off"
+        if self.paused_reason != "DELIVERY_UNKNOWN":
+            self.paused_reason = "STORAGE_UNAVAILABLE"
+        self.epoch += 1
+        if job is not None and job["state"] in ACTIVE:
+            self._transition(job, "FAILED_BEFORE_DISPATCH", ["STORAGE_UNAVAILABLE"])
+        self._cancel("SKIPPED_POLICY", "STORAGE_UNAVAILABLE")
+        self.pending.clear()
+
     def _unknown(self, job):
         self._transition(job, "DELIVERY_UNKNOWN", ["DELIVERY_UNKNOWN"])
         self.paused_reason = "DELIVERY_UNKNOWN"
@@ -331,4 +380,24 @@ class Engine:
     def detail(self, job_id):
         if job_id not in self.jobs:
             raise KeyError("JOB_NOT_FOUND")
-        return {**deepcopy(self.jobs[job_id]), "reply_text": self.texts.get(job_id)}
+        try:
+            text = self.journal.load_body("reply", job_id, self.clock.now) if self.journal.encrypted else self.texts.get(job_id)
+        except StorageError:
+            self._storage_failure()
+            raise
+        return {**deepcopy(self.jobs[job_id]), "reply_text": text}
+
+    async def delete_reply(self, job_id):
+        async with self.lock:
+            if job_id not in self.jobs:
+                raise KeyError("JOB_NOT_FOUND")
+            if self.jobs[job_id]["state"] == "DISPATCHING":
+                raise ValueError("DISPATCH_IN_PROGRESS")
+            if self.jobs[job_id]["state"] in ACTIVE:
+                self.epoch += 1
+                self._cancel("CANCELED_STALE", "BODY_DELETED")
+                self.pending.clear()
+            self.journal.delete_body("reply", job_id)
+            self.texts.pop(job_id, None)
+            self.transport.forget_body(job_id)
+            return self.state()

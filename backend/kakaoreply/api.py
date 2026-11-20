@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import os
-from pathlib import Path
 import secrets
 from typing import Literal
 
@@ -16,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import __version__
 from .domain import BINDING_ID, ROOT
 from .engine import Engine
-from .storage import Journal
+from .storage_setup import journal_from_environment
 
 
 class StrictInput(BaseModel):
@@ -45,7 +44,7 @@ class EmptyInput(StrictInput):
 def create_app(db_path: str | None = None, engine: Engine | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI):
-        application.state.engine = engine or Engine(Journal(db_path or os.getenv("KAKAOREPLY_DB_PATH", str(ROOT / "data/mock.sqlite"))))
+        application.state.engine = engine or Engine(journal_from_environment(db_path or os.getenv("KAKAOREPLY_DB_PATH", str(ROOT / "data/mock.sqlite"))))
         application.state.token = secrets.token_urlsafe(32)
         try:
             yield
@@ -101,6 +100,12 @@ def create_app(db_path: str | None = None, engine: Engine | None = None) -> Fast
     async def state(request: Request):
         return request.app.state.engine.state()
 
+    @application.get("/api/storage")
+    async def storage(request: Request):
+        journal = request.app.state.engine.journal
+        return {"schema_version": 2, "body_storage": "aead" if journal.encrypted else "memory_only",
+                "raw_retention_days": request.app.state.engine.config["storage"]["raw_retention_days"]}
+
     @application.post("/api/simulator/start")
     async def start(body: StartInput, request: Request):
         return await request.app.state.engine.start(body.mode)
@@ -121,6 +126,13 @@ def create_app(db_path: str | None = None, engine: Engine | None = None) -> Fast
     async def detail(job_id: str, request: Request):
         try:
             return request.app.state.engine.detail(job_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="JOB_NOT_FOUND") from None
+
+    @application.delete("/api/jobs/{job_id}/body")
+    async def delete_body(job_id: str, request: Request):
+        try:
+            return await request.app.state.engine.delete_reply(job_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="JOB_NOT_FOUND") from None
 

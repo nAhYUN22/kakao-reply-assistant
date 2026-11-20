@@ -26,3 +26,9 @@ export interface RuntimeState {
 
 export interface JobDetail extends Job { reply_text: string | null }
 export type MessageOrigin = 'partner' | 'owner' | 'unknown';
+
+export interface StorageStatus {
+  schema_version: 2;
+  body_storage: 'aead' | 'memory_only';
+  raw_retention_days: number;
+}

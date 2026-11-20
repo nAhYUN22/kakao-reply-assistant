@@ -13,7 +13,7 @@
 
 확인 시 위 Codex 문서는 OpenAI의 `learn.chatgpt.com` 문서로 연결됩니다. 사용자 Mac의 Codex 버전·계정 정책·활성 기능은 이 문서 확인만으로 검증되지 않습니다.
 
-`docs/agents/*.md`는 이 프로젝트가 정한 일반 문서 구조입니다. 이를 자동 에이전트 생성 기능이라고 설명하지 않습니다. 실제 스킬·서브에이전트 설정은 AI_WORKFLOW의 템플릿이며 현재 계정에 설치하지 않았습니다.
+`docs/agents/*.md`는 이 프로젝트가 정한 일반 문서 구조입니다. 이를 자동 에이전트 생성 기능이라고 설명하지 않습니다. 스킬·서브에이전트 설정은 AI_WORKFLOW 템플릿으로 프로젝트에 생성했습니다. M2 호스트 목록에서 로컬 스킬 등록을 확인했으며 전역 설치는 하지 않았습니다.
 
 ## 2. 카카오톡 연결 구현 작성자 자료
 
@@ -55,3 +55,12 @@ kmsg는 카카오가 제공하는 공식 도구가 아닙니다. 작성자 문�
 - https://vite.dev/guide/ — Vite 빌드와 개발 서버. 프로젝트는 설치·빌드로 검증한 Vite 7 계열을 사용.
 
 실제 설치 버전의 최종 값은 `uv.lock`, `frontend/package-lock.json`과 PROGRESS를 확인합니다. kmsg가 PATH에 없어 이번 단계에서 kmsg 도움말·MCP tools/list·카카오톡 읽기 및 전송은 실행하지 않았습니다.
+
+## M2 구현 근거 (2026-11-20)
+
+- [cryptography AEAD](https://cryptography.io/en/latest/hazmat/primitives/aead/): 설치 cryptography 50.0.2의 AESGCM 사용과 nonce/AAD. 합성 키 테스트로 검증했습니다.
+- [keyring 공식 문서](https://keyring.readthedocs.io/en/latest/): 설치 keyring 25.7.0. 자동 backend 탐색 대신 macOS backend를 명시합니다. 실제 Keychain 접근은 미실행입니다.
+- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk): 설치 mcp 1.30.0의 실제 ClientSession/stdio API와 source를 확인하고 가짜 서버로 handshake/read/close를 실행했습니다.
+- [kmsg 고정 MCP 서버 소스](https://github.com/channprj/kmsg/blob/54cbff790b409214735ef365a621d791034fe500/Sources/kmsg/Commands/MCPServerCommand.swift): 공개 도구는 read/send/send_image이며 catalog 도구가 없습니다. JSONL 요청을 감지하면 JSONL 응답으로 전환합니다. CLI watch의 pretty JSON 규칙과 구분합니다.
+
+이 증거는 kmsg 설치본의 tools/list나 Mac 카카오톡 읽기 성공을 대신하지 않습니다. 실제 설치본 버전/권한/스키마는 후속 실기기 검증에서 확인해야 합니다.

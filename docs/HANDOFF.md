@@ -1,57 +1,57 @@
 # 다음 Codex 세션 인수인계
 
-기준일: 2026-11-20. **M0/M1 구현·모의 검증 완료, 다음은 M2입니다.**
+기준일: 2026-11-20. **M0/M1 완료, M2 저장·읽기 어댑터·관측 코드/모의 검증 완료. M2 실연결 통합과 실기기 검증은 남아 있습니다.**
 
-## 읽을 파일
+## 먼저 읽기
 
-AGENTS.md → PROGRESS.md → PLAN.md → PRODUCT_SPEC/ARCHITECTURE/CONTRACTS → M1_API.md → 작업에 맞는 KAKAO_ADAPTER/RELIABILITY/TEST_PLAN. 기존 상세 명세는 전체 제품 요구이며 M1 구현보다 넓습니다.
+AGENTS → PROGRESS → PLAN → PRODUCT_SPEC/ARCHITECTURE/CONTRACTS → M1_API/M2_CONTRACT → KAKAO_ADAPTER/RELIABILITY/TEST_PLAN. 세부 명세는 현재 구현보다 넓습니다. 기존 M0/M1 완료를 다시 시작하지 마세요.
 
-## 실제 구조와 명령
-
-- `backend/kakaoreply/{domain,adapters,storage,engine,api}.py`
-- `frontend/src/` React/TypeScript 화면과 API 테스트
-- `tests/backend/` 37개 + `tests/test_contracts.py` 7개
-- `scripts/smoke.py`, `Makefile`, `pyproject.toml`, `uv.lock`, `frontend/package-lock.json`
-- 프로젝트 스킬 `.agents/skills/reply-{implement,review,eval}/SKILL.md`
-- 역할 정의 `.codex/agents/{backend,frontend,reviewer}.toml`
+## 실행
 
 ```bash
 make install
 make test
 make build
 make smoke
+make smoke-m2
 make serve
 ```
 
-127.0.0.1:8765에서 빌드 UI를 제공합니다. 개발 UI는 별도 `make dev-ui`로 5173에서 실행합니다. Python 3.12 이상, uv, Node 22.12 이상/npm이 필요합니다. 현재 `.venv`는 임시 위치에 설치한 Python 3.12.13 기반이므로 임시 런타임이 정리되면 `uv sync --locked`로 재생성하세요.
+Python 3.12 이상, uv, Node 22.12 이상/npm. 현재 `.venv`는 `/private/tmp/kakaoreply-python`의 Python 3.12.13 기반입니다. 임시 런타임이 없어지면 `uv sync --locked`로 재생성하세요. 캐시 `/private/tmp/kakaoreply-uv-cache`와 `UV_SYSTEM_CERTS=true`로 설치·offline 잠금 재현을 확인했습니다. 보안 설정을 낮추지 않습니다.
 
-## 동작과 불변조건
+`make serve`는 빌드 UI를 127.0.0.1:8765로 제공합니다. 기존 데모 서버는 `/private/tmp/kakaoreply-browser-m2.sqlite`, 시작 PID 91575, 모의/off 상태입니다. 포트 점유 시 실행 명령을 확인해 해당 서버만 정상 종료하고 재시작합니다. UI 토큰은 새로고침으로 갱신됩니다.
 
-- 기본 mock/off/실전송 false. 모의 시작만 합성 대상과 데모 활성 구간을 설정합니다.
-- UI/API로 시간을 명시적으로 전진합니다. 실시간 운영 타이머가 아닙니다.
-- 생성은 MockLLM, 발송은 FakeTransport. 실제 카카오톡/LLM 호출은 없습니다.
-- 첫 600초·settle 20초·cooldown 900초, 수동 답장/불명 작성자/문맥 변경/중지의 후보 취소.
-- 모든 모의 발송도 최종 정책·길이·AI 표시 검사 및 durable outbox를 통과합니다.
-- 불명확 전송 자동 재시도 금지. start(auto)로 우회할 수 없습니다.
-- `data/mock.sqlite` 기본 또는 `KAKAOREPLY_DB_PATH`; 동일 DB에 프로세스 잠금. 일반 원문은 DB·로그에 없습니다.
-- 생성문은 메모리 전용이라 재시작 후 상세 null. 재시작은 off, 미완료 작업 취소·DISPATCHING 불명 복구. 민감 자료 영속 암호화/Keychain은 미구현.
+## 구조와 검증
 
-## 검증 결과와 알려진 사항
+- `backend/kakaoreply/{domain,adapters,engine,api}.py`: 합성 엔진, 정책, API.
+- `{crypto,keys,storage,storage_setup}.py`: AES-GCM, Keychain 공급자, SQLite v2, 명시적 키 준비.
+- `kakao/{mcp_client,relay,observation}.py`: 읽기 전용 실제 MCP SDK/가짜 서버 계약, 크기·종료 보호, 대상/관측 파서.
+- `frontend/src/`: 기존 합성 UI + 저장 안내/로컬 생성문 삭제.
+- `tests/backend`, `tests/security`, `tests/storage`, `tests/kakao`, `tests/test_contracts.py` 및 frontend 테스트.
+- `.agents/skills/reply-{implement,review,eval}`는 호스트 목록에서 등록 확인. `.codex/agents` TOML은 구문 검증했으나 자동 선택은 미검증. 이번에는 실제 collaboration 위임을 사용했습니다.
 
-Python 44개, UI/API 10개 통과; build 및 API smoke 통과. 인앱 브라우저에서 모의 발송·상세·본인 취소·중지 확인. Starlette TestClient의 httpx deprecation warning 1개는 후속 정리 항목입니다.
+최종 테스트 결과는 PROGRESS를 확인하세요. TypeScript/Vite, M1/M2 smoke, 브라우저 생성문 삭제/이력 보존까지 통과했습니다. 기존 Starlette TestClient httpx 경고 1개가 남습니다. 실제 Keychain·kmsg·카카오톡·외부 모델 접근은 모두 실행하지 않았습니다.
 
-독립 리뷰의 무기한 PENDING 문제는 만료를 due보다 먼저 검사해 수정했습니다. 사용자 개입·취소·중복·다른 대상·UNKNOWN 복구·API 원문 비노출 회귀가 있습니다. 기존 인수 시나리오 49개 전부나 실제 Mac 연동은 검증하지 않았습니다.
+## 유지할 불변조건
 
-## 다음 구현
+- 기본 mock/off/실전송 false. UI/API는 가짜 시간을 명시적으로 전진합니다.
+- MockLLM과 FakeTransport만 앱에 연결합니다. 실제 자동 발송은 제품 범위이나 이번 개발에서 실제 사람에게 보내지 않습니다.
+- 600초/settle20초/cooldown900초, epoch 취소, 최종 SendGate·고정 AI 표시·한도·durable 단일 시도 유지.
+- 불명확 결과는 DELIVERY_UNKNOWN, 자동 재시도 금지. 재시작은 off이며 미완료 후보 취소.
+- v2 DB 기본 metadata-only는 본문 비영속. Keychain 선택 시 생성문은 암호화 저장 후 발송하며 실패하면 off. 암호화 DB를 키 없이 다시 열 수 없습니다.
+- Keychain 실제 준비는 RUNBOOK의 명시 명령입니다. 이번 세션에서 실행하지 않았습니다. 실제 키·원문을 환경변수·로그·Git·Codex 프롬프트에 넣지 않습니다.
+- 생성문 삭제/7일 만료 시 본문과 모의 복사본은 지우고 시도 기록은 남깁니다. 생성 중 삭제는 늦은 결과 폐기, 발송 중 삭제는 409. 발송 회수 기능이 아닙니다.
 
-1. 실제 설치된 kmsg 버전·help 및 MCP tools/list를 확인할 어댑터/가짜 MCP 계약 테스트를 구현합니다. 현재 PATH에 kmsg는 없습니다.
-2. 민감 컬럼 AEAD·Keychain, 명시적 DB 마이그레이션/삭제·보존 정책을 추가합니다. M1의 본문 없는 metadata journal을 실데이터 저장으로 그대로 확대하지 마세요.
-3. 실제 스냅샷 정규화·baseline·대상/작성자 증거·직접 답장 관측을 구현합니다. 계정/권한이 없어도 mock 테스트는 계속합니다.
-4. 개인화·외부 모델·live 전송은 이후 M3/M4입니다. 최종 제품에는 자동 발송이 포함됩니다.
+## 다음 작업 순서
 
-실제 Mac 읽기·실제 전송·자동 실운영 모두 미실행입니다. 이번 개발 요청은 실제 사람에게 메시지를 보내는 권한을 포함하지 않습니다. 개인 전역 Codex 설정도 바꾸지 마세요.
+1. M2 읽기 orchestration을 합성 자료로 먼저 통합합니다. `McpReadClient`는 읽기만 제공하며 모의 엔진은 live 이벤트를 거부합니다. 권한·대상 증거를 갖춘 별도 경로를 명시적으로 설계하세요.
+2. kmsg MCP에는 catalog 도구가 없으므로 확인된 목록 확보 경로와 대상 재확인 UI를 구현합니다. 숨은 CLI fallback이나 없는 API를 추가하지 마세요. for_kmsg는 절대 실행 파일 경로가 필요하며 설치본 스키마를 다시 확인해야 합니다.
+3. `SnapshotScanner`는 최초/reconnect baseline, 공백·stale·모호한 overlap·축소/rollback 뒤 REVALIDATION_REQUIRED입니다. 사용자 재확인 후 reset하며 다음 관측도 baseline입니다. `(me)`는 본인 근거가 아니며 authorship=unknown을 학습에 쓰지 않습니다. 실제 직접 답장/bot echo 증거가 남습니다.
+4. 같은 DB flock 및 공유 MCP dispatcher는 구현했지만, 서로 다른 DB/클라이언트 프로세스 사이의 전역 UI 잠금은 통합되지 않았습니다. 실연결 전에 처리하세요.
+5. 실시간 시계/절전 복구·본문 보존 정리와 감사30일/tombstone 설계를 추가합니다. 가짜 시계 통과를 실시간 검증으로 보고하지 마세요.
+6. 실제 Keychain·Mac 읽기는 별도 검증하며 계정/권한/대상 범위를 확인합니다. kmsg는 현재 PATH에 없습니다. 실제 Mac 준비가 안 되어도 합성 구현은 계속합니다.
+7. M3 개인화·사실/말투 분리·실제 모델, M4 자동 전송/복구, M5 운영은 후속입니다. 실전송 테스트는 대상·내용·횟수가 승인된 경우만 가능합니다.
 
-Git `main`과 origin은 사용자 지정 https://github.com/nAhYUN22/kakao-reply-assistant.git 에 연결되어 있습니다. 최신 업로드 결과와 커밋은 PROGRESS 및 `git status`/`git log`로 확인하세요. 원격 이력을 강제로 덮어쓰지 않습니다.
+## GitHub
 
-
-최초 구현 커밋 `8ac9104`는 원격 `main`에 업로드했고 `origin/main` 추적 연결을 설정했습니다. 현재 실행해 둔 브라우저 데모 서버는 `/private/tmp/kakaoreply-browser-m1.sqlite`를 사용합니다. 다음 작업에서 8765 포트가 이미 사용 중이면 기존 데모 서버를 확인해 정상 종료한 뒤 재실행하세요. 재시작 후 UI의 기존 토큰은 새로고침으로 갱신합니다.
+`main`은 사용자 지정 [GitHub](https://github.com/nAhYUN22/kakao-reply-assistant)에 연결되어 있으며 origin/main을 추적합니다. 기존 M0/M1 커밋은 8ac9104/8fb53ae입니다. M2 최신 커밋과 원격 반영은 `git log -3 --oneline`, `git status -sb`로 확인하세요. 강제 push하지 않습니다. 실제 대화·키·DB·빌드 산출물은 커밋하지 않습니다.

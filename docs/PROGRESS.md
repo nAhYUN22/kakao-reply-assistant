@@ -4,6 +4,71 @@
 
 | 구분 | 실제 상태 |
 |---|---|
+| 코드 구현 | M0/M1 완료, M2 저장·읽기 어댑터/관측·생성문 삭제 UI 구현. M2 전체는 부분 완료 |
+| 모의 검증 | Python 131개·UI 18개 통과, build·smoke 2종·브라우저 검증 통과 |
+| 실제 macOS Keychain | 공급자 구현, 가짜 backend 테스트 완료. 실제 접근·키 생성 0회 |
+| 실제 Mac 카카오톡 읽기 | 미실행. PATH에 kmsg 없음, 계정·권한·대상 미확인 |
+| 실제 전송/자동 운영 | 미실행, 0회. 이번 개발 요청에서 실제 사람에게 보내지 않음 |
+| GitHub | origin/main 연결 유지. M2 변경의 최종 커밋/동기화는 git log/status 확인 |
+
+## 이번 M2 구현
+
+- `crypto.py`, `keys.py`: AES-256-GCM, schema/table/row/key ID 인증, HKDF 분리 HMAC, 명시적 macOS Keychain 공급자와 가짜 키 공급자. 키 준비는 별도 명령이며 기존 키를 덮어쓰지 않습니다.
+- `storage.py`, `storage_setup.py`: SQLite v1→v2 트랜잭션 마이그레이션, 키 참조/검증값, 생성문 암호화 저장·7일 만료·삭제, 기존 attempts/UNKNOWN/중복 기록 보존. 키가 없거나 틀리면 평문으로 fallback하지 않습니다.
+- `engine.py`, `api.py`: 발송 전 암호화·키 확인, 실패 시 off/발송 0회, 재시작 본문 복구, 저장 상태 API와 로컬 본문 삭제 API. 생성 중 삭제는 결과를 폐기하고 발송 중 삭제는 거부합니다.
+- `kakao/`: 실제 MCP SDK stdio initialize/list/read/close, 읽기 도구 allowlist, schema/대상 검사, timeout/프레임 상한/프로세스 그룹 종료, 원문 진단 제거. 실제 엔진이나 계정에 연결하지 않습니다.
+- `observation.py`: catalog 확인/동명·변경 거부, baseline/순서 overlap, 반복 문구와 축소·rollback 보류. 모호성 후 REVALIDATION_REQUIRED 상태로 유지하며 재확인 뒤 reset이 필요합니다. `(me)`를 본인 확인 근거로 쓰지 않습니다.
+- React: 저장 방식 안내, 생성문 삭제 확인·결과·실패 표시. 저장 상태 조회가 실패해도 즉시 중지를 사용할 수 있습니다.
+- `make smoke-m2`: 합성 암호화 복구/삭제와 실제 SDK↔가짜 서버 handshake/read를 재현합니다.
+
+기본은 metadata-only/mock/off입니다. 암호화는 환경변수의 키 참조로 명시적으로 선택하며, 실제 키 값은 환경변수나 저장소에 넣지 않습니다. 현재 암호화 저장을 엔진에 통합한 대상은 생성문입니다. 일반 메시지/바인딩 원문 수집·보관은 live 통합과 함께 후속 작업입니다.
+
+## M2 실행 기록
+
+| 명령/행동 | 실제 결과 |
+|---|---|
+| `UV_SYSTEM_CERTS=true ... uv sync` | cryptography 50.0.2, keyring 25.7.0, mcp 1.30.0 설치 및 uv.lock 갱신 |
+| 같은 cache/Python 경로의 `uv sync --locked --offline` | 잠금 파일 재현 성공: 50 resolved / 44 checked |
+| `.venv/bin/python -m pytest -q` | 131 passed, 1 warning (backend 37 + 계약 7 + security 40 + storage 18 + kakao 29) |
+| `npm --prefix frontend test` | 18 tests passed (2 files) |
+| `make build` | TypeScript 검사/Vite production build 통과 |
+| `make smoke` | 합성 입력→599/600초→모의 발송·중복 방지·본인 취소·중지 통과 |
+| `make smoke-m2` | 합성 암호화 재오픈·삭제/시도 보존, 실제 SDK 가짜 MCP 읽기 통과 |
+| `.venv/bin/python -m compileall -q backend` | 통과 |
+| Uvicorn + 인앱 브라우저 | 합성 입력→600초→발송 1회→AI 표시→생성문 삭제 확인→본문 없음/이력 유지→중지 통과 |
+| `git diff --check` | 통과 |
+
+Starlette TestClient의 httpx deprecation warning 1개가 유지됩니다. 실제 Keychain/카카오톡/외부 LLM 호출은 위 테스트에 없습니다. 인수 요구사항 49개 전체 완료를 뜻하지 않습니다.
+
+## M2 독립 리뷰 및 역할
+
+프로젝트 로컬 reply-implement/reply-review를 읽어 적용했고 호스트 목록에 로컬 스킬 3개 등록을 확인했습니다. custom agent TOML 자동 선택은 별도 미검증입니다. 실제 m2_crypto/m2_mcp/frontend/reviewer를 파일 책임별로 위임하고 주 에이전트가 저장소·엔진·API·잠금·문서를 통합했습니다. 전역 Codex 설정은 변경하지 않았습니다.
+
+독립 리뷰에서 발견한 아래 결함은 수정·재현 검증을 마쳤습니다.
+
+1. 삭제 후 모의 전송기 복사본에 본문이 남음 → attempts/echoes의 본문도 삭제·만료 시 제거, 발송 시도 메타데이터 보존.
+2. TERM 무시 하위 프로세스가 stdout 대기 중 잔존 → relay의 제한된 종료/kill 보강, 고아 프로세스 종료 확인.
+3. 반복 anchor와 축소/rollback snapshot에서 과거 입력을 신규로 재방출 → 축소·위치 모호성을 latch, 재확인 전 이벤트 0개.
+
+최종 독립 리뷰에서 추가 확정 결함은 없었습니다. 최종 생성/삭제 경쟁 회귀는 주 에이전트가 추가 검증했습니다.
+
+## 남은 작업과 현재 실행 상태
+
+M2 잔여: 실제 읽기 catalog 확보·재확인 UI, live 관측과 엔진 연결, 실작성자/본인 직접 답장/bot echo 증거, 서로 다른 프로세스/DB 간 UI dispatcher, 실제 Keychain 및 Mac 읽기 검증. 현재 MCP 관측은 authorship=unknown이며 학습 자료로 승격하지 않습니다.
+
+7일 보존은 가짜 시계 기반이며 실시간 정리 스케줄러는 없습니다. 감사 메타데이터 30일 정리도 tombstone 설계와 함께 남깁니다. M3 개인화·실제 모델, M4 실제 자동 발송/복구, M5 전체 화면/운영은 미완료입니다.
+
+현재 데모 서버는 `KAKAOREPLY_DB_PATH=/private/tmp/kakaoreply-browser-m2.sqlite`, `127.0.0.1:8765`, mode=off로 남겨 두었습니다. 합성 모의 발송 이력 1건과 삭제된 생성문을 확인할 수 있습니다. PID 91575로 시작했으며 다음 작업에서는 포트 점유 상태와 실행 명령을 확인한 뒤 종료/재시작하세요. 브라우저 증거는 `/private/tmp/kakaoreply-m2.jpg`이며 Git에는 포함하지 않습니다.
+
+---
+
+## 이전 M0/M1 실행 기록 (당시 상태)
+
+
+기준일: 2026-11-20 (Asia/Seoul)
+
+| 구분 | 실제 상태 |
+|---|---|
 | 명세·개발 지침 | 기존 패키지 보존, 구현 결과에 맞춰 실행·진행 문서 갱신 |
 | 코드 구현 | M0/M1 완료. FastAPI + React 합성 시뮬레이터 실행 가능 |
 | 모의 검증 | Python 44개, UI/API 10개 통과; API smoke 및 실제 브라우저 수직 흐름 통과 |

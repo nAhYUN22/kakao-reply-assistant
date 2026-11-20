@@ -40,3 +40,27 @@ describe('로컬 API 경계', () => {
     expect(fetcher.mock.calls[1][0]).toBe('/api/session');
   });
 });
+
+
+describe('생성문 관리 API', () => {
+  it('저장소 상태를 인증된 GET 요청으로 조회한다', async () => {
+    const storage = { schema_version: 2, body_storage: 'aead', raw_retention_days: 7 };
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'synthetic-session-token' })).mockResolvedValueOnce(response(storage));
+    vi.stubGlobal('fetch', fetcher);
+    const { api } = await import('./api');
+    await expect(api.storage()).resolves.toEqual(storage);
+    expect(fetcher.mock.calls[1][0]).toBe('/api/storage');
+    expect(fetcher.mock.calls[1][1]).toMatchObject({ method: 'GET', headers: { 'X-Session-Token': 'synthetic-session-token' } });
+  });
+
+  it('생성문 삭제는 토큰을 포함한 DELETE 요청이며 본문을 보내지 않는다', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'synthetic-session-token' })).mockResolvedValueOnce(response({ mode: 'off' }));
+    vi.stubGlobal('fetch', fetcher);
+    const { api } = await import('./api');
+    await api.deleteBody('synthetic/job');
+    expect(fetcher.mock.calls[1][0]).toBe('/api/jobs/synthetic%2Fjob/body');
+    expect(fetcher.mock.calls[1][1]).toMatchObject({ method: 'DELETE', headers: { 'X-Session-Token': 'synthetic-session-token' } });
+    expect(fetcher.mock.calls[1][1].body).toBeUndefined();
+    expect(fetcher.mock.calls[1][1].headers['Content-Type']).toBeUndefined();
+  });
+});

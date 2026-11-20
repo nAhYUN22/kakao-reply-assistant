@@ -274,3 +274,15 @@ MCP의 도구 목록 확인만으로 자동 답장 제품 전체가 작동한다
 - [kmsg USAGE](https://github.com/channprj/kmsg/blob/main/USAGE.md): CLI/MCP 옵션과 JSON·confirm·ID 제약입니다.
 - [kmsg ARCHITECTURE](https://github.com/channprj/kmsg/blob/main/ARCHITECTURE.md): 접근성 기반 구조와 로컬 식별·watch 방식입니다.
 - upstream 자료의 설명과 본 프로젝트의 권고 정책을 구별합니다. 설치 버전과 다른 동작은 구현 중 증거를 남겨 갱신합니다.
+
+## M2 구현 범위 (2026-11-20)
+
+`backend/kakaoreply/kakao`에 실제 SDK stdio 읽기 전용 클라이언트와 합성 관측 파서를 구현했습니다. `tests/kakao`의 가짜 MCP subprocess 및 `make smoke-m2`로 검증하며 실제 kmsg 설치/읽기는 수행하지 않았습니다.
+
+- `McpReadClient.for_kmsg`는 설치된 실행 파일의 절대 경로를 받습니다. `connect()` 안에서 초기화·도구 스키마 확인 후 `read_snapshot(binding)`만 제공합니다. 전송 메서드는 없습니다.
+- 호출은 background_safe=true/deep_recovery=false/trace_ax=false, 최대 100개입니다. 스키마 불일치·대상 변경·호출 실패 뒤에는 재연결이 필요합니다.
+- MCP에는 목록 도구가 없어 `BindingVerifier.bind`는 별도 확인된 catalog/1:1 확인을 요구합니다. 최신 catalog를 `verify`해야 하며 자동 재바인딩하지 않습니다.
+- `SnapshotScanner`는 최초 기준선과 유일한 순서 overlap만 받아들입니다. 공백·시간 역행·모호성 발생 후에는 `REVALIDATION_REQUIRED`로 정지하고, 재확인 뒤 명시적 `reset()`이 필요합니다. `(me)`는 본인 식별 증거로 사용할 수 없습니다.
+- 현재 엔진은 live 이벤트를 받지 않습니다. 읽기 orchestration·사용자 확인 UI·실작성자/bot echo 검증·실시간 polling·전역 dispatcher·실전송은 후속입니다.
+
+SDK JSONL 호환 근거는 [고정 MCP 소스](https://github.com/channprj/kmsg/blob/54cbff790b409214735ef365a621d791034fe500/Sources/kmsg/Commands/MCPServerCommand.swift)입니다. 위 watch JSON 표는 CLI watch에 관한 것이며 MCP wire와 구분합니다.

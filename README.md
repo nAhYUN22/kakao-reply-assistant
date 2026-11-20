@@ -1,6 +1,6 @@
 # KakaoReply
 
-Mac용 카카오톡 대리 답장 앱을 개발하고 있습니다. 현재는 **M0/M1 합성 시뮬레이터**이며, FastAPI와 React UI에서 합성 메시지 입력 → 대기 → MockLLM 후보 생성 → 모의 발송 → 이력 조회를 실행할 수 있습니다. 실제 카카오톡이나 외부 모델에는 연결하지 않습니다.
+Mac용 카카오톡 대리 답장 앱을 개발하고 있습니다. 현재 **M0/M1 합성 시뮬레이터와 M2 저장·읽기 어댑터의 코드/모의 검증**을 구현했습니다.  FastAPI와 React UI에서 합성 메시지 입력 → 대기 → MockLLM 후보 생성 → 모의 발송 → 이력 조회를 실행할 수 있습니다. 실제 카카오톡이나 외부 모델에는 연결하지 않습니다.
 
 ## 실행
 
@@ -19,11 +19,12 @@ make serve
 ```bash
 make test
 make smoke
+make smoke-m2
 ```
 
-초기 모드는 `mock/off`, 실제 전송은 항상 비활성화입니다. 합성 문장만 입력하세요. SQLite에는 본문 없는 작업·시도 메타데이터를 저장하며 본문은 메모리에만 있어 재시작 후 사라집니다. `data/`는 Git에 포함되지 않습니다.
+초기 모드는 `mock/off`, 실제 전송은 항상 비활성화입니다. 합성 문장만 입력하세요. 기본 저장은 SQLite 작업·시도 메타데이터와 메모리 본문입니다. Keychain을 명시적으로 설정하면 생성문을 AES-GCM으로 암호화해 보관하며, 키가 없으면 시작/발송을 중단합니다. 설정 명령은 [RUNBOOK](docs/RUNBOOK.md)에 있습니다. 화면에서 로컬 생성문을 삭제해도 발송 시도 기록은 남습니다. `data/`는 Git에 포함되지 않습니다.
 
-개인화, 실제 MCP/CLI 연결, Keychain 및 민감 데이터 영속화, 실제 자동 발송은 후속 단계입니다. 최종 제품에는 자동 발송이 포함됩니다. 실제 검증 범위와 명령 결과는 [PROGRESS](docs/PROGRESS.md), 다음 작업은 [HANDOFF](docs/HANDOFF.md), 운영 절차는 [RUNBOOK](docs/RUNBOOK.md)를 확인하세요.
+MCP 읽기 전용 클라이언트는 실제 SDK와 가짜 서버로 검증했습니다. 실제 Keychain 및 카카오톡 읽기는 미검증이며, 읽기 관측과 엔진의 연결, 개인화, 실제 자동 발송은 후속 작업입니다. 최종 제품에는 자동 발송이 포함됩니다. 실제 검증 범위와 명령 결과는 [PROGRESS](docs/PROGRESS.md), 다음 작업은 [HANDOFF](docs/HANDOFF.md), 운영 절차는 [RUNBOOK](docs/RUNBOOK.md)를 확인하세요.
 
 ## 무엇이 들어 있나요?
 
@@ -31,7 +32,7 @@ make smoke
 |---|---|
 | `backend/kakaoreply/` | 합성 엔진·정책·어댑터·SQLite journal·FastAPI |
 | `frontend/` | React/TypeScript 시뮬레이터와 사용자 흐름 테스트 |
-| `tests/`, `scripts/smoke.py` | 백엔드·계약·API 수직 기능 검증 |
+| `tests/`, `scripts/{smoke,m2_smoke}.py` | 정책·암호화·저장·MCP·API 합성 검증 |
 | `Makefile`, `pyproject.toml`, `uv.lock` | 실행 명령·Python 의존성과 잠금 |
 | `CODEX_MASTER_PROMPT.md` | Codex에 복사할 상세 구현 프롬프트 |
 | `AGENTS.md` | 프로젝트 공통 개발 지침 |
@@ -60,7 +61,7 @@ make smoke
 - `docs/agents/*.md`는 역할 문서이며, 파일 존재만으로 별도 에이전트가 실행되지 않습니다.
 - `prompts/runtime/*.md`는 개발 지침이 아니라 운영 앱의 생성 프롬프트입니다.
 
-프로젝트에 스킬 3개와 서브에이전트 TOML 3개를 템플릿으로 생성했습니다. 이번 구현에서는 파일을 직접 읽어 지침을 적용하고 실제 backend/frontend/reviewer 서브에이전트를 사용했습니다. 자동 발견 여부와 전역 설치는 별개이며 개인 전역 설정은 변경하지 않았습니다.
+프로젝트에 스킬 3개와 서브에이전트 TOML 3개를 템플릿으로 생성했습니다. 이번 구현에서는 파일을 직접 읽어 지침을 적용하고 실제 backend/frontend/reviewer 서브에이전트를 사용했습니다. M2 세션에서는 호스트 스킬 목록에 프로젝트 스킬 3개가 표시되는 것을 확인했습니다. custom agent TOML 자동 선택은 별도 미검증이며 개인 전역 설정은 변경하지 않았습니다.
 
 ## 현재 검증 상태
 

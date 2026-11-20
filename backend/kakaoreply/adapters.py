@@ -62,3 +62,9 @@ class FakeTransport:
 
     def verify_binding(self, binding_id: str) -> bool:
         return self.binding_verified and binding_id == BINDING_ID
+
+    def forget_body(self, job_id: str) -> None:
+        """Remove diagnostic plaintext copies while preserving attempt counts."""
+        for record in self.attempts + self.echoes:
+            if record["job_id"] == job_id:
+                record.pop("text", None)
