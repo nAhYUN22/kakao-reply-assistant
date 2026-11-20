@@ -3,7 +3,7 @@
 Calling verify means the API has already obtained the user's confirmation that
 its selected conversation is 1:1. Results prove neither author identity nor send
 readiness. Catalogs are bounded UI observations, not exhaustive account indexes.
-No background tasks, message storage, general tool invocation, or send methods.
+Explicit named replies use a separate exact-window single-press helper.
 """
 from __future__ import annotations
 
@@ -23,6 +23,9 @@ import stat
 import time
 import unicodedata
 
+from ..domain import SUFFIX
+from .reply_snapshot import CONTEXT_LIMIT, ReplySnapshot, make_context, matches_new_echo, require_recent
+from .scoped_dispatch import prepare_scoped_press
 from .mcp_client import McpReadClient
 from .observation import BindingVerifier, ReadError, SnapshotScanner, _catalog, parse_snapshot
 
@@ -41,7 +44,8 @@ _SAFE_ERRORS = frozenset({
     'MCP_CONNECTION_FAILED', 'MCP_READ_FAILED', 'CONFLICTING_PAYLOAD', 'PAYLOAD_TOO_LARGE',
     'INVALID_TIMESTAMP', 'NOT_CONNECTED', 'PROBE_FAILED',
     'INVALID_CHAT_NAME', 'TITLE_MISMATCH', 'DIRECT_READ_TIMEOUT',
-    'DIRECT_READ_FAILED', 'DIRECT_READ_TOO_LARGE',
+    'DIRECT_READ_FAILED', 'DIRECT_READ_TOO_LARGE', 'EMPTY_CONTEXT', 'LAST_NOT_PARTNER',
+    'AMBIGUOUS_AUTHOR', 'UNSUPPORTED_CONTENT', 'STALE_INPUT',
 })
 
 
@@ -235,40 +239,84 @@ class Probe:
         # Drop previews and all unknown fields before caching or returning.
         return {'count': len(rows), 'chats': [{'chat_id': chat_id, 'title': title} for chat_id, title in rows]}
 
-    async def direct_read(self, name: str) -> dict:
-        """One explicit foreground CLI read, without catalog or binding claims.
+    @staticmethod
+    def _target(name):
+        if (not isinstance(name, str) or not 1 <= len(name) <= 500
+                or any(unicodedata.category(c).startswith('C') or unicodedata.category(c) in {'Zl', 'Zp'}
+                       for c in name)):
+            raise ReadError('INVALID_CHAT_NAME')
+        target = name.strip()
+        if not target or target.startswith('-'):
+            raise ReadError('INVALID_CHAT_NAME')
+        return target
 
-        The actual returned title must match exactly, but this cannot distinguish
-        different rooms with the same title. No event/newness/author inference.
-        """
+    async def _read_named(self, binary, target, limit, *selector):
+        raw = await self._run_cli_json(binary, ('read', '--json', '--limit', str(limit), *(selector or (target,))),
+                                      timeout=self._timeout, max_bytes=MAX_DIRECT_READ_BYTES,
+                                      operation='DIRECT_READ')
+        if not isinstance(raw, dict):
+            raise ReadError('DIRECT_READ_FAILED')
+        if raw.get('chat') != target:
+            raise ReadError('TITLE_MISMATCH')
+        if 'ok' in raw or type(raw.get('count')) is not int or not 0 <= raw['count'] <= limit:
+            raise ReadError('DIRECT_READ_FAILED')
         try:
-            if (not isinstance(name, str) or not 1 <= len(name) <= 500
-                    or any(unicodedata.category(character).startswith('C')
-                           or unicodedata.category(character) in {'Zl', 'Zp'} for character in name)):
-                raise ReadError('INVALID_CHAT_NAME')
-            target = name.strip()
-            if not target or target.startswith('-'):
-                raise ReadError('INVALID_CHAT_NAME')
+            return parse_snapshot({'ok': True, **raw})
+        except Exception:
+            raise ReadError('DIRECT_READ_FAILED') from None
+
+    async def direct_read(self, name: str) -> dict:
+        """One explicit foreground CLI read; an exact title does not prove identity."""
+        try:
+            target = self._target(name)
             with _ui_lock():
-                raw = await self._run_cli_json(self._binary(), ('read', '--json', '--limit', '3', target),
-                                              timeout=self._timeout, max_bytes=MAX_DIRECT_READ_BYTES,
-                                              operation='DIRECT_READ')
-                if not isinstance(raw, dict):
-                    raise ReadError('DIRECT_READ_FAILED')
-                # Check the actual window title before touching message fields.
-                if raw.get('chat') != target:
-                    raise ReadError('TITLE_MISMATCH')
-                if 'ok' in raw or type(raw.get('count')) is not int or not 0 <= raw['count'] <= 3:
-                    raise ReadError('DIRECT_READ_FAILED')
-                try:
-                    snapshot = parse_snapshot({'ok': True, **raw})
-                except Exception:
-                    raise ReadError('DIRECT_READ_FAILED') from None
+                snapshot = await self._read_named(self._binary(), target, 3)
                 return {'status': 'READ', 'count': len(snapshot.rows)}
-        except asyncio.CancelledError:
-            raise
         except Exception as error:
             raise _safe_error(error) from None
+
+    async def reply_context(self, name: str) -> ReplySnapshot:
+        """API caller confirms the title and partner display name in a 1:1 room."""
+        try:
+            target = self._target(name)
+            with _ui_lock():
+                snapshot = await self._read_named(self._binary(), target, CONTEXT_LIMIT)
+                return make_context(snapshot)
+        except Exception as error:
+            raise _safe_error(error) from None
+
+    async def send_if_current(self, name, expected_snapshot, body, before_attempt):
+        target = self._target(name)
+        if (not isinstance(body, str) or not body.endswith('\n' + SUFFIX)
+                or body.count(SUFFIX) != 1 or not body[:-len(SUFFIX)].strip() or len(body) > 240):
+            raise ReadError('UNSUPPORTED_CONTENT')
+        if not isinstance(expected_snapshot, ReplySnapshot):
+            raise ReadError('CONTEXT_CHANGED')
+        with _ui_lock():
+            binary = self._binary()
+            catalog = await self._read_catalog(binary)
+            ids = [identity for identity, title in _catalog(catalog) if title == target]
+            if len(ids) != 1:
+                raise ReadError('AMBIGUOUS_TARGET')
+            binding = self._verifier.bind(catalog, ids[0], one_to_one_confirmed=True)
+            _require_unambiguous_search(binding, catalog)
+            # --chat-id can still fall back to fuzzy name resolution in kmsg.
+            # Require both exact returned title and exact timestamped transcript.
+            selector = ('--chat-id', binding.chat_id)
+            current = await self._read_named(binary, target, CONTEXT_LIMIT, '--keep-window', *selector)
+            if make_context(current) != expected_snapshot:
+                raise ReadError('CONTEXT_CHANGED')
+            require_recent(current, self._clock())
+            async with prepare_scoped_press(target, body, self._timeout, _stop_process) as submit:
+                current = await self._read_named(binary, target, CONTEXT_LIMIT, '--background-safe', *selector)
+                if make_context(current) != expected_snapshot:
+                    raise ReadError('CONTEXT_CHANGED')
+                require_recent(current, self._clock())
+                before_attempt()
+                await submit()
+                echo = await self._read_named(binary, target, CONTEXT_LIMIT, '--background-safe', *selector)
+                if not matches_new_echo(current, echo, body):
+                    raise ReadError('DELIVERY_UNKNOWN')
 
     async def catalog(self) -> dict:
         try:

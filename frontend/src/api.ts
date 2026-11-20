@@ -1,8 +1,25 @@
-import type { JobDetail, MessageOrigin, RuntimeState, StorageStatus, KakaoStatus, KakaoChoice, KakaoReadResult, KakaoDirectReadResult } from './types';
+import type { JobDetail, MessageOrigin, RuntimeState, StorageStatus, KakaoStatus, KakaoChoice, KakaoReadResult, KakaoDirectReadResult, KakaoReplyDraft, KakaoReplyAttempt } from './types';
 
 let session: Promise<string> | undefined;
 
 const diagnosticErrors: Record<string, string> = {
+  DRAFT_EXPIRED: '초안이 만료되었습니다. 최근 대화로 답장을 다시 만들어 주세요.',
+  CONTEXT_CHANGED: '대화가 달라져 발송을 취소했습니다. 마지막 메시지를 다시 확인해 주세요.',
+  LAST_NOT_PARTNER: '마지막 메시지가 상대의 말로 확인되지 않아 답장을 만들 수 없습니다.',
+  EMPTY_CONTEXT: '최근에 읽을 수 있는 대화가 없습니다.',
+  MODEL_UNAVAILABLE: '로컬 Ollama 모델에 연결할 수 없습니다. Ollama 실행 상태와 서버에 설정한 모델 이름을 확인해 주세요.',
+  MODEL_INVALID_RESPONSE: '로컬 모델이 사용할 수 있는 답장 형식을 반환하지 않아 생성을 보류했습니다.',
+  GENERATION_UNSUPPORTED: '기본 생성 규칙에서 지원하지 않는 대화입니다. 자유로운 대화를 처리하려면 설치된 로컬 Ollama 모델을 서버에 설정해 주세요.',
+  STALE_INPUT: '마지막 메시지 시각을 확인할 수 없거나 최근 30분 이내의 메시지가 아니어서 발송을 보류했습니다.',
+  ATTEMPT_NOT_FOUND: '해당 발송 시도를 찾을 수 없습니다. 이력을 다시 열어 주세요.',
+  GENERATION_HOLD: '최근 대화에서 답장에 필요한 근거를 확인하지 못해 생성을 보류했습니다.',
+  DELIVERY_UNKNOWN: '발송 결과를 확인할 수 없습니다. 카카오톡 대화창을 확인한 뒤 아래 이력에 확인을 기록해 주세요.',
+  ALREADY_ATTEMPTED: '이 메시지에 대한 발송 시도가 이미 있습니다. 카카오톡 대화창에서 결과를 확인해 주세요.',
+  AMBIGUOUS_AUTHOR: '최근 메시지를 누가 썼는지 확인할 수 없어 답장을 보류했습니다.',
+  UNSUPPORTED_CONTENT: '최근 대화에 처리할 수 없는 메시지가 있어 답장을 보류했습니다.',
+  LIVE_SEND_UNAVAILABLE: '이 환경에서는 대상과 전송 경로를 검증할 수 없어 실제 발송을 사용할 수 없습니다.',
+  STOPPED: '중지 요청으로 초안을 폐기했습니다.',
+  REPLY_BUSY: '다른 답장 요청을 처리하고 있습니다. 완료 후 다시 확인해 주세요.',
   DIRECT_READ_TIMEOUT: '이름으로 읽기 요청 시간이 초과되었습니다. 읽기 결과를 확인하지 못했습니다.',
   DIRECT_READ_FAILED: '이름으로 대화를 읽지 못했습니다. 원인은 확인되지 않았습니다. 이름과 카카오톡 상태를 확인해 주세요.',
   TITLE_MISMATCH: 'kmsg가 반환한 대화 제목이 입력한 이름과 달라 읽기 결과를 버렸습니다. 정확한 대화 이름을 확인해 주세요.',
@@ -20,11 +37,14 @@ const diagnosticErrors: Record<string, string> = {
   READ_CHECK_FAILED: '대화 읽기 결과를 확인하지 못했습니다. 대상과 권한을 확인한 뒤 다시 시도해 주세요.',
 };
 
+const uncertainSend = '발송 결과를 확인할 수 없습니다. 카카오톡 대화창에서 직접 확인해 주세요.';
+
 async function json<T>(path: string, init: RequestInit = {}, timeoutMs = 15000): Promise<T> {
   let response: Response;
   try {
     response = await fetch(path, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   } catch {
+    if (path === '/api/kakao/reply/send') throw new Error(uncertainSend);
     throw new Error('로컬 서버에 연결하지 못했습니다. 서버 실행 상태를 확인한 뒤 다시 시도해 주세요.');
   }
   if (!response.ok) {
@@ -34,6 +54,8 @@ async function json<T>(path: string, init: RequestInit = {}, timeoutMs = 15000):
       let detail: unknown;
       try { detail = (await response.json())?.detail; } catch { /* Fall through to generic status. */ }
       if (typeof detail === 'string' && Object.hasOwn(diagnosticErrors, detail)) throw new Error(diagnosticErrors[detail]);
+      if (path.startsWith('/api/kakao/reply/') && (response.status === 404 || response.status === 405)) throw new Error('답장 기능을 찾지 못했습니다. 현재 서버를 시작한 터미널에서 재시작해 주세요.');
+      if (path === '/api/kakao/reply/send' && response.status >= 500) throw new Error(uncertainSend);
     }
     if (response.status === 401 || response.status === 403) throw new Error('로컬 세션이 만료되었습니다. 연결을 다시 확인해 주세요.');
     if (response.status === 409) throw new Error('현재 상태에서는 실행할 수 없습니다. 상태를 새로 확인해 주세요.');
@@ -43,6 +65,7 @@ async function json<T>(path: string, init: RequestInit = {}, timeoutMs = 15000):
   try {
     return await response.json() as T;
   } catch {
+    if (path === '/api/kakao/reply/send') throw new Error(uncertainSend);
     throw new Error('서버 응답을 확인하지 못했습니다. 상태를 다시 확인해 주세요.');
   }
 }
@@ -60,6 +83,10 @@ async function request<T>(path: string, body?: unknown, method?: 'DELETE', timeo
 export const api = {
   kakaoStatus: () => request<KakaoStatus>('/api/kakao/status'),
   kakaoReadByName: (name: string) => request<KakaoDirectReadResult>('/api/kakao/read-by-name', { name, one_to_one_confirmed: true }, undefined, 120000),
+  kakaoPrepareReply: (name: string) => request<KakaoReplyDraft>('/api/kakao/reply/prepare', { name, one_to_one_confirmed: true }, undefined, 120000),
+  kakaoReplyHistory: () => request<{ attempts: KakaoReplyAttempt[] }>('/api/kakao/reply/history'),
+  kakaoReviewAttempt: (id: string) => request<unknown>('/api/kakao/reply/review', { attempt_id: id, confirmed: true }),
+  kakaoSendReply: (draftId: string) => request<{ status: 'CONFIRMED_LOCAL' }>('/api/kakao/reply/send', { draft_id: draftId, confirmed: true }, undefined, 120000),
   kakaoCatalog: () => request<{ choices: KakaoChoice[] }>('/api/kakao/catalog', {}, undefined, 120000),
   kakaoVerify: (id: string, allowOpenWindow = false) => request<KakaoReadResult>('/api/kakao/verify', { id, one_to_one_confirmed: true, allow_open_window: allowOpenWindow }, undefined, 120000),
   state: () => request<RuntimeState>('/api/state'),

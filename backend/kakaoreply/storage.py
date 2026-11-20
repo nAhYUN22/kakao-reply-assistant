@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import json
+import secrets
 from pathlib import Path
 import sqlite3
 from typing import TYPE_CHECKING
@@ -66,6 +67,48 @@ class Journal:
             self.db.execute("CREATE TABLE encryption(key_id TEXT NOT NULL, verifier BLOB NOT NULL)")
             self.db.execute("CREATE TABLE sensitive(kind TEXT NOT NULL, id TEXT NOT NULL, ciphertext BLOB NOT NULL, expires_at TEXT NOT NULL, PRIMARY KEY(kind,id))")
             self.db.execute("UPDATE schema_version SET version=2")
+        # Additive metadata only; older v2 databases need no body migration.
+        self.db.execute("""
+            CREATE TABLE IF NOT EXISTS context_attempts(
+                digest TEXT PRIMARY KEY, at TEXT NOT NULL, confirmed INTEGER NOT NULL DEFAULT 0,
+                reviewed INTEGER NOT NULL DEFAULT 0)
+        """)
+
+    def _context_digest(self, latest_key: str) -> str:
+        salt = self.get("context_attempt_salt")
+        if salt is None:
+            salt = secrets.token_hex(32)
+            self.put("context_attempt_salt", salt)
+        return hashlib.sha256((salt + latest_key).encode()).hexdigest()
+
+    def claim_context_attempt(self, latest_key: str):
+        """Commit uncertainty before the external operation. Never retry an orphaned claim."""
+        self.ensure_key()
+        digest = self._context_digest(latest_key)
+        with self.db:
+            if self.db.execute("SELECT 1 FROM context_attempts WHERE confirmed=0 AND reviewed=0 LIMIT 1").fetchone():
+                raise StorageError("DELIVERY_UNKNOWN")
+            try:
+                self.db.execute("INSERT INTO context_attempts(digest,at) VALUES(?,?)",
+                                (digest, self._utc(datetime.now(timezone.utc))))
+            except sqlite3.IntegrityError:
+                raise StorageError("ALREADY_ATTEMPTED") from None
+
+    def confirm_context_attempt(self, latest_key: str):
+        with self.db:
+            self.db.execute("UPDATE context_attempts SET confirmed=1 WHERE digest=?",
+                            (self._context_digest(latest_key),))
+
+    def context_history(self) -> list[dict]:
+        rows = self.db.execute("SELECT digest,at,confirmed,reviewed FROM context_attempts ORDER BY rowid DESC LIMIT 20")
+        return [{"id": digest, "at": at, "status": "CONFIRMED_LOCAL" if confirmed else "DELIVERY_UNKNOWN",
+                 "requires_review": not (confirmed or reviewed)} for digest, at, confirmed, reviewed in rows]
+
+    def review_context_attempt(self, digest: str):
+        with self.db:
+            row = self.db.execute("UPDATE context_attempts SET reviewed=1 WHERE digest=? AND confirmed=0", (digest,))
+            if row.rowcount != 1:
+                raise StorageError("ATTEMPT_NOT_FOUND")
 
     def ensure_key(self):
         if self.key_check is not None:

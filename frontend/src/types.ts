@@ -42,3 +42,18 @@ export interface KakaoReadResult {
 }
 
 export interface KakaoDirectReadResult { status: 'READ'; count: number }
+
+export interface KakaoReplyDraft {
+  draft_id: string;
+  in_reply_to: string;
+  text: string;
+  context_count: number;
+  expires_in_seconds: number;
+}
+
+export interface KakaoReplyAttempt {
+  id: string;
+  at: string;
+  status: 'CONFIRMED_LOCAL' | 'DELIVERY_UNKNOWN';
+  requires_review: boolean;
+}

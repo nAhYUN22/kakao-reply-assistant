@@ -127,3 +127,51 @@ describe('이름 지정 직접 읽기 API', () => {
     await expect(api.kakaoReadByName('합성 테스트 대화')).rejects.toThrow('현재 서버를 시작한 터미널에서 재시작해 주세요');
   });
 });
+
+describe('실제 대화의 1회 답장 API', () => {
+  it('초안에는 대상 이름과 확인을, 발송에는 초안 ID와 명시 확인만 보낸다', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'synthetic-session-token' })).mockResolvedValueOnce(response({})).mockResolvedValueOnce(response({ status: 'CONFIRMED_LOCAL' }));
+    vi.stubGlobal('fetch', fetcher);
+    const { api } = await import('./api');
+    await api.kakaoPrepareReply('합성 방');
+    await api.kakaoSendReply('synthetic-draft');
+    const [, prepare, send] = fetcher.mock.calls;
+    expect(prepare[0]).toBe('/api/kakao/reply/prepare');
+    expect(send[0]).toBe('/api/kakao/reply/send');
+    for (const [, init] of [prepare, send]) expect(init).toMatchObject({method: 'POST', headers: {'X-Session-Token': 'synthetic-session-token'}});
+    expect(JSON.parse(prepare[1].body)).toEqual({ name: '합성 방', one_to_one_confirmed: true });
+    expect(JSON.parse(send[1].body)).toEqual({ draft_id: 'synthetic-draft', confirmed: true });
+  });
+
+  it.each([
+    ['CONTEXT_CHANGED', '대화가 달라져'],
+    ['DELIVERY_UNKNOWN', '발송 결과를 확인할 수 없습니다'],
+    ['ALREADY_ATTEMPTED', '발송 시도가 이미 있습니다'],
+    ['DRAFT_EXPIRED', '초안이 만료되었습니다'],
+  ])('%s를 표시하며 원문이나 명령을 재전송하지 않는다', async (code, message) => {
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'synthetic-session-token' })).mockResolvedValueOnce(response({ detail: code }, 409));
+    vi.stubGlobal('fetch', fetcher);
+    const { api } = await import('./api');
+    await expect(api.kakaoSendReply('synthetic-draft')).rejects.toThrow(message);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('발송 응답이 끊겨도 재시도를 제안하지 않는다', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'synthetic-session-token' })).mockRejectedValueOnce(new Error('timeout'));
+    vi.stubGlobal('fetch', fetcher);
+    const { api } = await import('./api');
+    await expect(api.kakaoSendReply('synthetic-draft')).rejects.toThrow('카카오톡 대화창에서 직접 확인');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+});
+
+it('실제 이력 조회와 미확정 발송 검토는 전송 endpoint를 호출하지 않는다', async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'synthetic-session-token' })).mockResolvedValueOnce(response({ attempts: [] })).mockResolvedValueOnce(response({}));
+  vi.stubGlobal('fetch', fetcher);
+  const { api } = await import('./api');
+  await api.kakaoReplyHistory(); await api.kakaoReviewAttempt('synthetic-attempt');
+  expect(fetcher.mock.calls[1][0]).toBe('/api/kakao/reply/history');
+  expect(fetcher.mock.calls[1][1]).toMatchObject({ method: 'GET', headers: { 'X-Session-Token': 'synthetic-session-token' } });
+  expect(fetcher.mock.calls[2][0]).toBe('/api/kakao/reply/review');
+  expect(fetcher.mock.calls[2][1]).toMatchObject({ method: 'POST', body: '{"attempt_id":"synthetic-attempt","confirmed":true}' });
+});

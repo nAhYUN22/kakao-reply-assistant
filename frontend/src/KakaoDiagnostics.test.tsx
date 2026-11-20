@@ -3,12 +3,13 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { KakaoDiagnostics } from './KakaoDiagnostics';
 import { api } from './api';
-import type { KakaoChoice, KakaoDirectReadResult } from './types';
+import type { KakaoChoice, KakaoDirectReadResult, KakaoReplyDraft } from './types';
 
-vi.mock('./api', () => ({ api: { kakaoStatus: vi.fn(), kakaoCatalog: vi.fn(), kakaoVerify: vi.fn(), kakaoReadByName: vi.fn() } }));
+vi.mock('./api', () => ({ api: { kakaoStatus: vi.fn(), kakaoCatalog: vi.fn(), kakaoVerify: vi.fn(), kakaoReadByName: vi.fn(), kakaoPrepareReply: vi.fn(), kakaoSendReply: vi.fn(), kakaoReplyHistory: vi.fn(), kakaoReviewAttempt: vi.fn() } }));
 const choices = [{ id: 'synthetic-room-a', title: '합성 테스트 대화 A' }, { id: 'synthetic-room-b', title: '합성 테스트 대화 B' }];
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(api.kakaoReplyHistory).mockResolvedValue({ attempts: [] });
   vi.mocked(api.kakaoStatus).mockResolvedValue({ installed: true });
   vi.mocked(api.kakaoReadByName).mockResolvedValue({ status: 'READ', count: 3 });
   vi.mocked(api.kakaoCatalog).mockResolvedValue({ choices });
@@ -203,4 +204,105 @@ describe('이름으로 바로 읽기', () => {
     expect(api.kakaoCatalog).toHaveBeenCalledTimes(1);
     expect(api.kakaoVerify).not.toHaveBeenCalled();
   });
+});
+
+describe('최근 대화 답장', () => {
+  const draft = { draft_id: 'synthetic-draft', in_reply_to: '합성 상대 메시지', text: '합성 초안\n— 부재중 AI 답장', context_count: 4, expires_in_seconds: 60 };
+  async function chooseRoom() {
+    const user = await open();
+    await user.type(screen.getByLabelText('읽을 대화 이름'), choices[0].title);
+    await user.click(screen.getByRole('checkbox', { name: /입력한 이름이 원하는 1:1 대화/ }));
+    return user;
+  }
+
+  it('초안을 읽고 실제 대상·본문을 확인한 후에만 1회 발송한다', async () => {
+    vi.mocked(api.kakaoPrepareReply).mockResolvedValue(draft);
+    let finish!: (value: {status: 'CONFIRMED_LOCAL'}) => void;
+    vi.mocked(api.kakaoSendReply).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const user = await chooseRoom();
+    await user.click(screen.getByRole('button', { name: '답장 초안 만들기' }));
+    expect(api.kakaoPrepareReply).toHaveBeenCalledExactlyOnceWith(choices[0].title);
+    expect(screen.getByText('최근 대화 4건을 읽었습니다.')).toBeVisible();
+    expect(screen.getByText(/합성 초안/)).toBeVisible();
+    expect(screen.getByText(choices[0].title + '에게 보낼 답장')).toBeVisible();
+    const send = screen.getByRole('button', { name: '카카오톡으로 1회 발송' });
+    expect(send).toBeDisabled();
+    expect(api.kakaoSendReply).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('checkbox', { name: /위 답장을 이 대화에/ }));
+    await user.dblClick(send);
+    expect(api.kakaoSendReply).toHaveBeenCalledExactlyOnceWith(draft.draft_id);
+    expect(screen.queryByText(/이 답장의 발신을 확인/)).not.toBeInTheDocument();
+    await act(async () => finish({ status: 'CONFIRMED_LOCAL' }));
+    expect(screen.getByText(/이 답장의 발신을 확인/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: '카카오톡으로 1회 발송' })).not.toBeInTheDocument();
+  });
+
+  it('대상 이름이 바뀌면 초안과 발송 확인을 폐기한다', async () => {
+    vi.mocked(api.kakaoPrepareReply).mockResolvedValue(draft);
+    const user = await chooseRoom();
+    await user.click(screen.getByRole('button', { name: '답장 초안 만들기' }));
+    await user.click(screen.getByRole('checkbox', { name: /위 답장을 이 대화에/ }));
+    await user.type(screen.getByLabelText('읽을 대화 이름'), '다른 방');
+    expect(screen.queryByText(/합성 초안/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '카카오톡으로 1회 발송' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '답장 초안 만들기' })).toBeDisabled();
+    expect(api.kakaoSendReply).not.toHaveBeenCalled();
+  });
+
+  it('중지한 뒤 도착한 생성 결과로 발송할 수 없다', async () => {
+    let finish!: (value: KakaoReplyDraft) => void;
+    vi.mocked(api.kakaoPrepareReply).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const user = userEvent.setup();
+    const { rerender } = render(<KakaoDiagnostics />);
+    await screen.findByText(/kmsg 실행 파일을 찾았습니다/);
+    await user.click(screen.getByRole('button', { name: '진단 열기' }));
+    await user.type(screen.getByLabelText('읽을 대화 이름'), choices[0].title);
+    await user.click(screen.getByRole('checkbox', { name: /입력한 이름이 원하는 1:1 대화/ }));
+    await user.click(screen.getByRole('button', { name: '답장 초안 만들기' }));
+    rerender(<KakaoDiagnostics stopVersion={1} />);
+    await act(async () => finish(draft));
+    expect(screen.queryByText(/합성 초안/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '카카오톡으로 1회 발송' })).not.toBeInTheDocument();
+    expect(api.kakaoSendReply).not.toHaveBeenCalled();
+  });
+
+  it('발송 결과가 불명확해도 자동으로 재시도하거나 성공을 표시하지 않는다', async () => {
+    vi.mocked(api.kakaoPrepareReply).mockResolvedValue(draft);
+    vi.mocked(api.kakaoSendReply).mockRejectedValue(new Error('발송 결과를 확인할 수 없습니다.'));
+    const user = await chooseRoom();
+    await user.click(screen.getByRole('button', { name: '답장 초안 만들기' }));
+    await user.click(screen.getByRole('checkbox', { name: /위 답장을 이 대화에/ }));
+    await user.click(screen.getByRole('button', { name: '카카오톡으로 1회 발송' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('발송 결과를 확인할 수 없습니다.');
+    expect(screen.queryByRole('button', { name: '카카오톡으로 1회 발송' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/이 답장의 발신을 확인/)).not.toBeInTheDocument();
+    expect(api.kakaoSendReply).toHaveBeenCalledTimes(1);
+  });
+});
+
+it('결과 미확정 이력은 직접 확인을 기록한 뒤에도 발송 성공으로 바뀌지 않는다', async () => {
+  const attempt = { id: 'synthetic-attempt', at: '2026-01-01T00:00:00Z', status: 'DELIVERY_UNKNOWN' as const, requires_review: true };
+  vi.mocked(api.kakaoReplyHistory).mockResolvedValueOnce({ attempts: [attempt] }).mockResolvedValueOnce({ attempts: [{ ...attempt, requires_review: false }] });
+  vi.mocked(api.kakaoReviewAttempt).mockResolvedValue({});
+  const user = await open();
+  await user.click(await screen.findByRole('button', { name: '카카오톡에서 발송 여부 확인 완료' }));
+  expect(api.kakaoReviewAttempt).toHaveBeenCalledExactlyOnceWith(attempt.id);
+  expect(await screen.findByText('사용자 확인 완료')).toBeVisible();
+  expect(screen.getByText('발송 결과 미확정')).toBeVisible();
+  expect(screen.queryByText('로컬 발신 확인')).not.toBeInTheDocument();
+  expect(api.kakaoSendReply).not.toHaveBeenCalled();
+});
+
+it('화면 시계가 초안 유효 시간을 넘으면 발송 요청을 보내지 않는다', async () => {
+  vi.mocked(api.kakaoPrepareReply).mockResolvedValue({ draft_id: 'synthetic-expiry', in_reply_to: '합성 질문', text: '합성 답장', context_count: 2, expires_in_seconds: 120 });
+  const user = await open();
+  await user.type(screen.getByLabelText('읽을 대화 이름'), choices[0].title);
+  await user.click(screen.getByRole('checkbox', { name: /입력한 이름이 원하는 1:1 대화/ }));
+  await user.click(screen.getByRole('button', { name: '답장 초안 만들기' }));
+  await user.click(screen.getByRole('checkbox', { name: /위 답장을 이 대화에/ }));
+  const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 121_000);
+  try { await user.click(screen.getByRole('button', { name: '카카오톡으로 1회 발송' })); }
+  finally { now.mockRestore(); }
+  expect(screen.getByText(/초안이 만료되었습니다/)).toBeVisible();
+  expect(api.kakaoSendReply).not.toHaveBeenCalled();
 });

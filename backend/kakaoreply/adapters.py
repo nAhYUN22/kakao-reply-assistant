@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import math
 
 from .domain import BINDING_ID
+from .context_generation import GenerationHold, MAX_TURNS, Turn, rule_reply
 
 
 class MockClock:
@@ -21,7 +22,7 @@ class MockClock:
 
 
 class MockLLM:
-    version = "mock-1"
+    version = "mock-2"
 
     async def generate(self, messages: tuple[str, ...]) -> dict:
         await asyncio.sleep(0)
@@ -34,7 +35,12 @@ class MockLLM:
         elif any(word in text for word in ("어디야", "뭐해", "먹었", "약속", "예약")):
             action, body, reason = "hold", "", "MISSING_FACT"
         else:
-            action, body, reason = "reply", "메시지 고마워. 남겨준 이야기 잘 확인했어.", "ACKNOWLEDGEMENT"
+            action, reason = "reply", "ACKNOWLEDGEMENT"
+            try:
+                body = rule_reply(tuple(Turn("partner", item) for item in messages[-MAX_TURNS:]))
+            except GenerationHold:
+                # The simulator keeps its synthetic acknowledgement for arbitrary test messages.
+                body = "메시지 고마워. 남겨준 이야기 잘 확인했어."
         return {"action": action, "reply_text": body, "reason_codes": [reason], "used_fact_ids": []}
 
 

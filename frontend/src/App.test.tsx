@@ -23,9 +23,9 @@ describe('모의 대화 사용자 흐름', () => {
   it('안전한 기본 상태에서 시작하며 실제 연결로 표시하지 않는다', async () => {
     await ready();
     expect(screen.getByText('중지됨')).toBeInTheDocument();
-    expect(screen.getByText('실제 전송 꺼짐')).toBeInTheDocument();
+    expect(screen.getByText('모의 대화에서만 작동')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '합성 메시지 넣기' })).toBeDisabled();
-    expect(screen.getByText('지금은 모의 연결입니다.')).toBeInTheDocument();
+    expect(screen.getByText('시뮬레이터는 모의 연결입니다.')).toBeInTheDocument();
   });
 
   it('합성 입력부터 대기와 모의 발송, 상세 생성문 조회까지 실행한다', async () => {

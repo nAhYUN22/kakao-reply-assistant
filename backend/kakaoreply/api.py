@@ -1,4 +1,4 @@
-"""Loopback simulator and user-initiated, read-only KakaoTalk checks."""
+"""Loopback simulator, KakaoTalk diagnostics and user-initiated contextual replies."""
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import __version__
+from .context_reply import ContextReplies
 from .domain import BINDING_ID, ROOT
 from .engine import Engine
 from .kakao.observation import ReadError
@@ -54,15 +55,27 @@ class NamedReadInput(StrictInput):
     one_to_one_confirmed: bool
 
 
+class SendDraftInput(StrictInput):
+    draft_id: str = Field(min_length=1, max_length=128)
+    confirmed: bool
+
+
+class ReviewAttemptInput(StrictInput):
+    attempt_id: str = Field(pattern="^[a-f0-9]{64}$")
+    confirmed: bool
+
+
 def create_app(db_path: str | None = None, engine: Engine | None = None, *, probe: Probe | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         application.state.engine = engine or Engine(journal_from_environment(db_path or os.getenv("KAKAOREPLY_DB_PATH", str(ROOT / "data/mock.sqlite"))))
         application.state.token = secrets.token_urlsafe(32)
         application.state.probe = probe if probe is not None else Probe()
+        application.state.replies = ContextReplies(application.state.probe, application.state.engine.journal)
         try:
             yield
         finally:
+            application.state.replies.clear()
             application.state.engine.close()
 
     application = FastAPI(title="KakaoReply mock API", version=__version__, lifespan=lifespan,
@@ -125,6 +138,10 @@ def create_app(db_path: str | None = None, engine: Engine | None = None, *, prob
             "AMBIGUOUS_TARGET", "BINDING_CHANGED", "BINDING_REQUIRES_CONFIRMATION",
             "MCP_READ_FAILED", "MCP_CONNECTION_FAILED", "INVALID_CATALOG",
             "READ_CAPABILITY_MISSING", "UNSUPPORTED_READ_SCHEMA", "READ_FAILED",
+            "DRAFT_EXPIRED", "CONTEXT_CHANGED", "EMPTY_CONTEXT", "LAST_NOT_PARTNER",
+            "GENERATION_HOLD", "DELIVERY_UNKNOWN", "ALREADY_ATTEMPTED", "AMBIGUOUS_AUTHOR",
+            "UNSUPPORTED_CONTENT", "LIVE_SEND_UNAVAILABLE", "STOPPED", "REPLY_BUSY", "STALE_INPUT",
+            "MODEL_UNAVAILABLE", "MODEL_INVALID_RESPONSE", "GENERATION_UNSUPPORTED",
         }
         reason = str(error)
         if reason == "SELECTION_EXPIRED":
@@ -153,6 +170,31 @@ def create_app(db_path: str | None = None, engine: Engine | None = None, *, prob
             raise ReadError("BINDING_REQUIRES_CONFIRMATION")
         return await request.app.state.probe.verify(body.id, allow_open_window=body.allow_open_window)
 
+    @application.post("/api/kakao/reply/prepare")
+    async def prepare_reply(body: NamedReadInput, request: Request):
+        if not body.one_to_one_confirmed:
+            raise ReadError("BINDING_REQUIRES_CONFIRMATION")
+        return await request.app.state.replies.prepare(body.name)
+
+    @application.post("/api/kakao/reply/send")
+    async def send_reply(body: SendDraftInput, request: Request):
+        if not body.confirmed:
+            raise ReadError("BINDING_REQUIRES_CONFIRMATION")
+        return await request.app.state.replies.send(body.draft_id)
+
+    @application.get("/api/kakao/reply/history")
+    async def context_history(request: Request):
+        return {"attempts": request.app.state.engine.journal.context_history()}
+
+    @application.post("/api/kakao/reply/review")
+    async def review_attempt(body: ReviewAttemptInput, request: Request):
+        if not body.confirmed:
+            raise ReadError("BINDING_REQUIRES_CONFIRMATION")
+        if request.app.state.replies.sending:
+            raise ReadError("REPLY_BUSY")
+        request.app.state.engine.journal.review_context_attempt(body.attempt_id)
+        return {"status": "REVIEWED"}
+
     @application.get("/api/storage")
     async def storage(request: Request):
         journal = request.app.state.engine.journal
@@ -173,6 +215,7 @@ def create_app(db_path: str | None = None, engine: Engine | None = None, *, prob
 
     @application.post("/api/runtime/pause")
     async def pause(body: EmptyInput, request: Request):
+        request.app.state.replies.clear()
         return await request.app.state.engine.pause()
 
     @application.get("/api/jobs/{job_id}")

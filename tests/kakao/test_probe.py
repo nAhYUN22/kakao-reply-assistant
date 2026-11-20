@@ -373,7 +373,8 @@ async def test_direct_read_validates_title_before_messages_and_sanitizes_failure
 
 async def test_direct_read_timeout_cleans_process_without_retry(fake):
     (fake.parent / 'mode').write_text('hang')
-    probe = Probe(str(fake), timeout_seconds=2)
+    # Leave room for macOS to launch the fixture before timing out its 30s hang.
+    probe = Probe(str(fake), timeout_seconds=8)
     with pytest.raises(ReadError, match='DIRECT_READ_TIMEOUT'):
         await probe.direct_read('Synthetic direct room')
     assert len(trace(fake)) == 1
