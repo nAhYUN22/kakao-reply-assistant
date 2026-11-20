@@ -47,6 +47,8 @@ async def kmsg_read(chat_id: str, limit: int = 20, background_safe: bool = False
                'count': 1, 'messages': [{'author': 'Synthetic partner', 'body': 'Synthetic hello'}]}
     if mode == 'wrong_target':
         payload['chat'] = 'Other synthetic person'
+    if mode == 'partial_target':
+        payload['chat'] = 'Synthetic partner extra'
     text = json.dumps(payload)
     if mode == 'conflict':
         text = '{}'

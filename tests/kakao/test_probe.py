@@ -42,6 +42,8 @@ if sys.argv[1:] == ['chats', '--json', '--limit', '1000']:
         print(json.dumps({'count': 1000, 'chats': [{'chat_id': str(i), 'title': str(i)} for i in range(1000)]}))
     elif mode == 'duplicate':
         print(json.dumps({'count': 2, 'chats': [{'chat_id': 'one', 'title': 'Synthetic partner'}, {'chat_id': 'two', 'title': 'Synthetic partner'}]}))
+    elif mode == 'near':
+        print(json.dumps({'count': 2, 'chats': [{'chat_id': 'chat_private_id', 'title': 'Synthetic partner'}, {'chat_id': 'other', 'title': (root / 'other_title').read_text()}]}))
     elif mode in ('missing_id', 'null_id'):
         row = {'title': 'Synthetic partner'}
         if mode == 'null_id':
@@ -64,12 +66,14 @@ async def kmsg_read(chat_id: str, limit: int = 20, background_safe: bool = False
     global reads
     reads += 1
     record({'kind': 'read', 'pid': os.getpid(), 'safe': background_safe, 'layout': layout, 'chat_id': chat_id})
-    assert background_safe and not deep_recovery and not trace_ax and layout == 'preserve'
+    assert type(background_safe) is bool and not deep_recovery and not trace_ax and layout == 'preserve'
+    assert os.environ['KMSG_DEFAULT_BACKGROUND_SAFE'] == 'true'
     assert chat_id == 'chat_private_id'
     messages = [{'author': '(me)', 'body': 'SYNTHETIC_PRIVATE_BASELINE'}]
     if reads == 2:
         messages.append({'author': 'Synthetic partner', 'body': 'SYNTHETIC_PRIVATE_NEW'})
-    payload = {'ok': True, 'chat': 'Synthetic partner', 'fetched_at': datetime.now(timezone.utc).isoformat(), 'count': len(messages), 'messages': messages}
+    title = 'Synthetic partner extra' if mode == 'partial_read' else 'Synthetic partner'
+    payload = {'ok': True, 'chat': title, 'fetched_at': datetime.now(timezone.utc).isoformat(), 'count': len(messages), 'messages': messages}
     return CallToolResult(content=[TextContent(type='text', text=json.dumps(payload))], structuredContent=payload)
 @server.tool()
 def kmsg_send(chat: str, message: str) -> str:
@@ -87,7 +91,8 @@ def trace(fake):
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
 
-async def test_catalog_and_two_reads_use_one_mcp_session_and_no_bodies(fake, caplog, capsys):
+@pytest.mark.parametrize('allow_open', [False, True])
+async def test_catalog_and_two_reads_use_one_mcp_session_and_no_bodies(fake, caplog, capsys, allow_open):
     delays = []
     async def fake_sleep(seconds):
         delays.append(seconds)
@@ -99,12 +104,13 @@ async def test_catalog_and_two_reads_use_one_mcp_session_and_no_bodies(fake, cap
     assert choices['choices'][0]['title'] == 'Synthetic partner'
     opaque = choices['choices'][0]['id']
     assert opaque != 'chat_private_id'
-    result = await probe.verify(opaque)
+    result = await probe.verify(opaque, allow_open_window=True) if allow_open else await probe.verify(opaque)
     assert result == {'baseline_count': 1, 'new_count': 1, 'status': 'APPENDED'}
     assert delays == [3]
     records = trace(fake)
     assert [row['kind'] for row in records] == ['catalog', 'mcp_start', 'catalog', 'read', 'catalog', 'read']
     assert len({row['pid'] for row in records if row['kind'] == 'read'}) == 1
+    assert [row['safe'] for row in records if row['kind'] == 'read'] == [not allow_open, not allow_open]
     assert 'PRIVATE' not in json.dumps(choices) + json.dumps(result) + caplog.text + str(capsys.readouterr())
     assert 'PRIVATE' not in repr(probe.__dict__)
     assert 'Synthetic partner' not in repr(probe.__dict__)
@@ -223,6 +229,37 @@ async def test_unknown_and_expired_selection_never_accesses_ui(fake):
     with pytest.raises(ReadError, match='SELECTION_EXPIRED'):
         await probe.verify(selection)
     assert [row['kind'] for row in trace(fake)] == ['catalog']
+
+
+@pytest.mark.parametrize('other_title,allow_open', [('synthetic partner', True), ('Synthetic-partner extra', True),
+                                                  ('partner', True), ('Ｓｙｎｔｈｅｔｉｃ ｐａｒｔｎｅｒ', True),
+                                                  ('Synthetic partner님', True), ('partner', False)])
+async def test_near_name_collision_blocks_reads(fake, other_title, allow_open):
+    (fake.parent / 'mode').write_text('near')
+    (fake.parent / 'other_title').write_text(other_title)
+    probe = Probe(str(fake))
+    choices = (await probe.catalog())['choices']
+    selected = next(row['id'] for row in choices if row['title'] == 'Synthetic partner')
+    with pytest.raises(ReadError, match='AMBIGUOUS_TARGET'):
+        await probe.verify(selected, allow_open_window=allow_open)
+    assert not any(row['kind'] == 'read' for row in trace(fake))
+
+
+async def test_foreground_wrong_resolved_window_never_returns_counts(fake):
+    (fake.parent / 'mode').write_text('partial_read')
+    probe = Probe(str(fake))
+    selected = (await probe.catalog())['choices'][0]['id']
+    with pytest.raises(ReadError, match='BINDING_CHANGED'):
+        await probe.verify(selected, allow_open_window=True)
+    assert sum(row['kind'] == 'read' for row in trace(fake)) == 1
+
+
+async def test_foreground_permission_requires_an_actual_boolean(fake):
+    probe = Probe(str(fake))
+    for value in (1, 'true', None):
+        with pytest.raises(ReadError, match='INVALID_CONFIGURATION'):
+            await probe.verify('anything', allow_open_window=value)
+    assert trace(fake) == []
 
 
 async def test_installed_only_checks_absolute_executable(tmp_path, monkeypatch):

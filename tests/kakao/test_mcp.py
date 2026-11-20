@@ -49,6 +49,28 @@ async def test_real_stdio_handshake_read_and_shutdown(tmp_path, capsys):
         await adapter.read_snapshot(binding())
 
 
+async def test_foreground_is_explicit_per_call_and_protected_environment_remains(tmp_path):
+    adapter = client(tmp_path)
+    async with adapter.connect():
+        await adapter.read_snapshot(binding(), allow_open_window=True)
+        await adapter.read_snapshot(binding())
+        for value in (1, 'true', None):
+            with pytest.raises(ReadError, match='INVALID_CONFIGURATION'):
+                await adapter.read_snapshot(binding(), allow_open_window=value)
+    calls = [json.loads(line) for line in (tmp_path / 'calls').read_text().splitlines()]
+    assert [call['background_safe'] for call in calls] == [False, True]
+    assert all(call['deep_recovery'] is False and call['trace_ax'] is False and call['layout'] == 'preserve' for call in calls)
+    assert_dead(tmp_path)
+
+
+async def test_foreground_partial_title_result_is_not_accepted(tmp_path):
+    adapter = client(tmp_path, 'partial_target')
+    with pytest.raises(ReadError, match='BINDING_CHANGED'):
+        async with adapter.connect():
+            await adapter.read_snapshot(binding(), allow_open_window=True)
+    assert_dead(tmp_path)
+
+
 @pytest.mark.parametrize('mode,code', [('error', 'READ_FAILED'), ('conflict', 'CONFLICTING_PAYLOAD'),
                                       ('wrong_target', 'BINDING_CHANGED'), ('missing', 'READ_CAPABILITY_MISSING'),
                                       ('delay', 'MCP_READ_FAILED'), ('malformed', 'MCP_READ_FAILED'),

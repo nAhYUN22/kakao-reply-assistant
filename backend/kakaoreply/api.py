@@ -46,6 +46,7 @@ class EmptyInput(StrictInput):
 class ReadCheckInput(StrictInput):
     id: str = Field(min_length=1, max_length=128)
     one_to_one_confirmed: bool
+    allow_open_window: bool = False
 
 
 def create_app(db_path: str | None = None, engine: Engine | None = None, *, probe: Probe | None = None) -> FastAPI:
@@ -136,7 +137,7 @@ def create_app(db_path: str | None = None, engine: Engine | None = None, *, prob
     async def kakao_verify(body: ReadCheckInput, request: Request):
         if not body.one_to_one_confirmed:
             raise ReadError("BINDING_REQUIRES_CONFIRMATION")
-        return await request.app.state.probe.verify(body.id)
+        return await request.app.state.probe.verify(body.id, allow_open_window=body.allow_open_window)
 
     @application.get("/api/storage")
     async def storage(request: Request):

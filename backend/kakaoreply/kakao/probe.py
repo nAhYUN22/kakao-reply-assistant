@@ -21,6 +21,7 @@ import shutil
 import signal
 import stat
 import time
+import unicodedata
 
 from .mcp_client import McpReadClient
 from .observation import BindingVerifier, ReadError, SnapshotScanner, _catalog
@@ -80,6 +81,36 @@ def _json_pairs(pairs):
             raise ReadError('INVALID_CATALOG')
         result[key] = value
     return result
+
+
+def _search_variants(title: str) -> set[str]:
+    # A conservative superset of kmsg v1.260921.0 search-token matching.
+    # NFKD/casefold also catches width, accent and case collisions; excessive
+    # ambiguity is safer than treating this partial UI catalog as identity proof.
+    def token(value):
+        return ''.join(character for character in unicodedata.normalize('NFKD', value).casefold()
+                       if not character.isspace()
+                       and unicodedata.category(character)[0] not in {'P', 'S', 'M'}
+                       and unicodedata.category(character) != 'Cf')
+    normalized = token(title)
+    variants = {normalized} if normalized else set()
+    for suffix in ('선생님', '님', '씨'):
+        normalized_suffix = token(suffix)
+        if normalized.endswith(normalized_suffix) and len(normalized) > len(normalized_suffix):
+            variants.add(normalized[:-len(normalized_suffix)])
+    return variants
+
+
+def _require_unambiguous_search(binding, catalog):
+    selected = _search_variants(binding.title)
+    if not selected:
+        raise ReadError('AMBIGUOUS_TARGET')
+    for chat_id, title in _catalog(catalog):
+        if chat_id == binding.chat_id:
+            continue
+        if any(left in right or right in left
+               for left in selected for right in _search_variants(title)):
+            raise ReadError('AMBIGUOUS_TARGET')
 
 
 async def _stop_process(process):
@@ -200,9 +231,16 @@ class Probe:
         except Exception as error:
             raise _safe_error(error) from None
 
-    async def verify(self, id: str) -> dict:
-        """API must enforce selected 1:1 confirmation before calling this method."""
+    async def verify(self, id: str, *, allow_open_window: bool = False) -> dict:
+        """API confirms 1:1 and separately opts in to foreground UI automation.
+
+        kmsg foreground may open/activate/search/close windows and retry recovery.
+        We reject known near-name collisions and exact-title mismatches, but the
+        catalog is not an exhaustive list and upstream does not prove identity.
+        """
         try:
+            if type(allow_open_window) is not bool:
+                raise ReadError('INVALID_CONFIGURATION')
             with _ui_lock():
                 if (not isinstance(id, str) or id not in self._choices
                         or self._fingerprint is None or time.monotonic() > self._expires):
@@ -221,14 +259,19 @@ class Probe:
                     binding = verifier.bind(fresh_catalog, self._choices[id], one_to_one_confirmed=True)
                     scanner = SnapshotScanner(binding)
                     verifier.verify(binding, fresh_catalog)
-                    baseline = await client.read_snapshot(binding)
+                    # Both upstream background and foreground resolution use
+                    # fuzzy name matching after resolving the local chat ID.
+                    _require_unambiguous_search(binding, fresh_catalog)
+                    baseline = await client.read_snapshot(binding, allow_open_window=allow_open_window)
                     first = scanner.scan(baseline, observed_at=self._clock())
                     if first.status != 'BASELINE':
                         return {'baseline_count': 0, 'new_count': 0, 'status': first.status}
                     baseline_count = len(baseline.rows)
                     await self._sleep(self._poll_seconds)
-                    verifier.verify(binding, await self._read_catalog(binary))
-                    current = await client.read_snapshot(binding)
+                    fresh_catalog = await self._read_catalog(binary)
+                    verifier.verify(binding, fresh_catalog)
+                    _require_unambiguous_search(binding, fresh_catalog)
+                    current = await client.read_snapshot(binding, allow_open_window=allow_open_window)
                     observation = scanner.scan(current, observed_at=self._clock())
                     return {'baseline_count': baseline_count, 'new_count': len(observation.events), 'status': observation.status}
         except asyncio.CancelledError:

@@ -172,12 +172,19 @@ class McpReadClient:
             self._schema = None
             self._connecting = False
 
-    async def read_snapshot(self, binding: Binding, *, limit: int = 100) -> Snapshot:
+    async def read_snapshot(self, binding: Binding, *, limit: int = 100,
+                            allow_open_window: bool = False) -> Snapshot:
         if self._session is None or self._schema is None:
             raise ReadError('NOT_CONNECTED')
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ReadError('INVALID_LIMIT')
-        arguments = {**_READ_ARGS, 'chat_id': binding.chat_id, 'limit': limit}
+        if type(allow_open_window) is not bool:
+            raise ReadError('INVALID_CONFIGURATION')
+        # kmsg v1.260921.0's explicit bool overrides the MCP environment default.
+        # ReadCommand itself checks only the generated CLI --background-safe flag.
+        # Opt-in is per call, never a sticky change to the protected default.
+        arguments = {**_READ_ARGS, 'chat_id': binding.chat_id, 'limit': limit,
+                     'background_safe': not allow_open_window}
         try:
             Draft202012Validator(self._schema).validate(arguments)
             with anyio.fail_after(self._timeout):

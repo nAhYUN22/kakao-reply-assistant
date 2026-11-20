@@ -16,8 +16,8 @@ class FakeProbe:
         self.operations.append("catalog")
         return {"choices": [{"id": "ticket", "title": "합성 대화"}]}
 
-    async def verify(self, ticket):
-        self.operations.append("verify")
+    async def verify(self, ticket, *, allow_open_window=False):
+        self.operations.append(("verify", allow_open_window))
         if ticket != "ticket":
             raise ReadError("SYNTHETIC_PRIVATE_DIAGNOSTIC")
         return {"baseline_count": 2, "new_count": 1, "status": "APPENDED"}
@@ -48,7 +48,19 @@ def test_probe_requires_local_session_and_explicit_confirmation(local):
     assert result.headers["cache-control"] == "no-store"
     state = client.get("/api/state").json()
     assert not state["jobs"] and state["mode"] == "off" and not state["live_send_enabled"]
-    assert probe.operations == ["catalog", "verify"]
+    assert probe.operations == ["catalog", ("verify", False)]
+
+
+def test_foreground_read_requires_explicit_boolean_and_confirmed_target(local):
+    client, probe = local
+    client.headers["X-Session-Token"] = client.get("/api/session").json()["token"]
+    body = {"id": "ticket", "one_to_one_confirmed": True, "allow_open_window": True}
+    for invalid in (1, "true", None):
+        assert client.post("/api/kakao/verify", json={**body, "allow_open_window": invalid}).status_code == 422
+    assert client.post("/api/kakao/verify", json={**body, "one_to_one_confirmed": False}).status_code == 409
+    assert probe.operations == []
+    assert client.post("/api/kakao/verify", json=body).status_code == 200
+    assert probe.operations == [("verify", True)]
 
 
 def test_probe_error_response_drops_upstream_text(local):

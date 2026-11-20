@@ -75,7 +75,7 @@ describe('카카오 읽기 진단 API', () => {
     expect(fetcher.mock.calls[1][0]).toBe('/api/kakao/status');
     expect(fetcher.mock.calls[1][1]).toMatchObject({ method: 'GET' });
     expect(fetcher.mock.calls[2][1]).toMatchObject({ method: 'POST', body: '{}' });
-    expect(fetcher.mock.calls[3][1]).toMatchObject({ method: 'POST', headers: { 'X-Session-Token': 'synthetic-session-token' }, body: '{"id":"synthetic-room","one_to_one_confirmed":true}' });
+    expect(fetcher.mock.calls[3][1]).toMatchObject({ method: 'POST', headers: { 'X-Session-Token': 'synthetic-session-token' }, body: '{"id":"synthetic-room","one_to_one_confirmed":true,"allow_open_window":false}' });
     expect(timeout.mock.calls.map(call => call[0])).toEqual([15000, 15000, 120000, 120000]);
     timeout.mockRestore();
   });
@@ -91,4 +91,13 @@ describe('카카오 읽기 진단 API', () => {
     const { api } = await import('./api');
     await expect(api.kakaoCatalog()).rejects.toThrow('요청을 완료하지 못했습니다. 상태를 새로 확인한 뒤 다시 시도해 주세요.');
   });
+});
+
+
+it('창 열기 허용은 명시적으로 true를 선택한 읽기 요청에만 전달한다', async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'synthetic-session-token' })).mockResolvedValueOnce(response({ baseline_count: 0, new_count: 0, status: 'UNCHANGED' }));
+  vi.stubGlobal('fetch', fetcher);
+  const { api } = await import('./api');
+  await api.kakaoVerify('synthetic-room', true);
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ id: 'synthetic-room', one_to_one_confirmed: true, allow_open_window: true });
 });

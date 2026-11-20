@@ -52,7 +52,7 @@ async function request<T>(path: string, body?: unknown, method?: 'DELETE', timeo
 export const api = {
   kakaoStatus: () => request<KakaoStatus>('/api/kakao/status'),
   kakaoCatalog: () => request<{ choices: KakaoChoice[] }>('/api/kakao/catalog', {}, undefined, 120000),
-  kakaoVerify: (id: string) => request<KakaoReadResult>('/api/kakao/verify', { id, one_to_one_confirmed: true }, undefined, 120000),
+  kakaoVerify: (id: string, allowOpenWindow = false) => request<KakaoReadResult>('/api/kakao/verify', { id, one_to_one_confirmed: true, allow_open_window: allowOpenWindow }, undefined, 120000),
   state: () => request<RuntimeState>('/api/state'),
   storage: () => request<StorageStatus>('/api/storage'),
   deleteBody: (id: string) => request<RuntimeState>(`/api/jobs/${encodeURIComponent(id)}/body`, undefined, 'DELETE'),
