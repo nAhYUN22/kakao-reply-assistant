@@ -3,13 +3,14 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { KakaoDiagnostics } from './KakaoDiagnostics';
 import { api } from './api';
-import type { KakaoChoice } from './types';
+import type { KakaoChoice, KakaoDirectReadResult } from './types';
 
-vi.mock('./api', () => ({ api: { kakaoStatus: vi.fn(), kakaoCatalog: vi.fn(), kakaoVerify: vi.fn() } }));
+vi.mock('./api', () => ({ api: { kakaoStatus: vi.fn(), kakaoCatalog: vi.fn(), kakaoVerify: vi.fn(), kakaoReadByName: vi.fn() } }));
 const choices = [{ id: 'synthetic-room-a', title: '합성 테스트 대화 A' }, { id: 'synthetic-room-b', title: '합성 테스트 대화 B' }];
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(api.kakaoStatus).mockResolvedValue({ installed: true });
+  vi.mocked(api.kakaoReadByName).mockResolvedValue({ status: 'READ', count: 3 });
   vi.mocked(api.kakaoCatalog).mockResolvedValue({ choices });
   vi.mocked(api.kakaoVerify).mockResolvedValue({ baseline_count: 3, new_count: 0, status: 'UNCHANGED' });
 });
@@ -27,7 +28,7 @@ describe('읽기 전용 진단', () => {
     expect(api.kakaoCatalog).not.toHaveBeenCalled();
     expect(api.kakaoVerify).not.toHaveBeenCalled();
     expect(screen.queryByText(/brew install channprj\/tap\/kmsg/)).not.toBeInTheDocument();
-    expect(screen.getByText(/대상을 선택하면 읽기를 확인할 수 있습니다/)).toBeInTheDocument();
+    expect(screen.getByText(/대화 이름을 입력해 바로 읽을 수 있습니다/)).toBeInTheDocument();
     expect(screen.getByText('시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용')).toBeInTheDocument();
     expect(screen.getByText('1:1 대화를 별도 창으로 열고 화면에 표시')).toBeInTheDocument();
   });
@@ -108,108 +109,98 @@ describe('읽기 전용 진단', () => {
 });
 
 
-describe('대화 이름 검색과 창 열기', () => {
-  it('이름이 정확히 하나 일치할 때만 대상을 고르고 창 열기를 허용하되 1:1 확인을 기다린다', async () => {
+describe('이름으로 바로 읽기', () => {
+  it('명시적 1:1·창 열기 확인 뒤 direct API만 한 번 호출하고 건수와 출처만 표시한다', async () => {
     const user = await open();
-    await user.type(screen.getByLabelText('대화 이름으로 찾기'), choices[0].title);
-    await user.click(screen.getByRole('button', { name: '이름으로 대화 찾기' }));
-    expect(api.kakaoCatalog).toHaveBeenCalledTimes(1);
+    const read = screen.getByRole('button', { name: '이름으로 바로 읽기' });
+    expect(read).toBeDisabled();
+    await user.type(screen.getByLabelText('읽을 대화 이름'), choices[0].title);
+    expect(read).toBeDisabled();
+    await user.click(screen.getByRole('checkbox', { name: /입력한 이름이 원하는 1:1 대화/ }));
+    expect(screen.getByText(/전경에서 한 번 실행해 최대 3건/)).toBeVisible();
+    expect(screen.getByText(/반환된 제목이 입력한 이름과 다르면 읽기 결과를 버립니다/)).toBeVisible();
+    await user.click(read);
+    expect(api.kakaoReadByName).toHaveBeenCalledExactlyOnceWith(choices[0].title);
+    expect(api.kakaoCatalog).not.toHaveBeenCalled();
     expect(api.kakaoVerify).not.toHaveBeenCalled();
-    expect(screen.getByLabelText('읽기 진단할 대화')).toHaveValue(choices[0].id);
-    expect(within(screen.getByRole('form', { name: '대화 이름 검색' })).getByText(choices[0].title)).toBeVisible();
-    expect(screen.getByRole('checkbox', { name: '읽기 확인 시 선택한 대화창 열기 허용' })).toBeChecked();
-    expect(screen.getByText(/미리 창을 열어둘 필요는 없습니다/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '대화창을 열고 읽기 확인' })).toBeDisabled();
-    await user.click(screen.getByRole('checkbox', { name: /선택한 대화가 원하는 상대/ }));
-    await user.click(screen.getByRole('button', { name: '대화창을 열고 읽기 확인' }));
-    expect(api.kakaoVerify).toHaveBeenCalledWith(choices[0].id, true);
+    const form = within(screen.getByRole('form', { name: '대화 이름으로 바로 읽기' }));
+    expect(await form.findByText('kmsg 이름 지정 읽기 결과')).toBeVisible();
+    expect(form.getByText('kmsg가 반환한 관측 건수: 3건')).toBeVisible();
+    expect(form.queryByText(/기준선|추가 관측/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('읽기 진단할 대화')).not.toBeInTheDocument();
   });
 
-  it('빈 이름은 대화 목록이나 읽기 API를 호출하지 않는다', async () => {
+  it('빈 이름이나 공백만 입력하면 확인·읽기 버튼을 활성화하지 않는다', async () => {
     const user = await open();
-    await user.type(screen.getByLabelText('대화 이름으로 찾기'), '   ');
-    await user.click(screen.getByRole('button', { name: '이름으로 대화 찾기' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('찾을 대화 이름을 입력해 주세요.');
+    await user.type(screen.getByLabelText('읽을 대화 이름'), '   ');
+    expect(screen.getByRole('checkbox', { name: /입력한 이름이 원하는 1:1 대화/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '이름으로 바로 읽기' })).toBeDisabled();
+    expect(api.kakaoReadByName).not.toHaveBeenCalled();
     expect(api.kakaoCatalog).not.toHaveBeenCalled();
     expect(api.kakaoVerify).not.toHaveBeenCalled();
   });
 
-  it.each(['없는 합성 이름', '합성 테스트'])('일치하지 않거나 일부만 맞는 이름 %s로 읽지 않는다', async name => {
+  it('이름을 바꾸면 이전 확인과 결과를 무효화한다', async () => {
     const user = await open();
-    await user.type(screen.getByLabelText('대화 이름으로 찾기'), name);
-    await user.click(screen.getByRole('button', { name: '이름으로 대화 찾기' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('이름이 정확히 일치하는 대화가 없습니다.');
-    expect(screen.getByLabelText('읽기 진단할 대화')).toHaveValue('');
-    expect(screen.getByRole('button', { name: '선택한 대화 읽기 확인' })).toBeDisabled();
+    await user.type(screen.getByLabelText('읽을 대화 이름'), choices[0].title);
+    await user.click(screen.getByRole('checkbox', { name: /입력한 이름이 원하는 1:1 대화/ }));
+    await user.click(screen.getByRole('button', { name: '이름으로 바로 읽기' }));
+    await screen.findByText('kmsg가 반환한 관측 건수: 3건');
+    await user.type(screen.getByLabelText('읽을 대화 이름'), '추가');
+    expect(screen.getByRole('checkbox', { name: /입력한 이름이 원하는 1:1 대화/ })).not.toBeChecked();
+    expect(screen.getByRole('button', { name: '이름으로 바로 읽기' })).toBeDisabled();
+    expect(screen.queryByText('kmsg가 반환한 관측 건수: 3건')).not.toBeInTheDocument();
+  });
+
+  it('제목 불일치 오류는 입력 폼 바로 아래 표시하며 결과 건수를 표시하지 않는다', async () => {
+    vi.mocked(api.kakaoReadByName).mockRejectedValue(new Error('kmsg가 반환한 대화 제목이 입력한 이름과 달라 읽기 결과를 버렸습니다.'));
+    const user = await open();
+    await user.type(screen.getByLabelText('읽을 대화 이름'), choices[0].title);
+    await user.click(screen.getByRole('checkbox', { name: /입력한 이름이 원하는 1:1 대화/ }));
+    await user.click(screen.getByRole('button', { name: '이름으로 바로 읽기' }));
+    const form = within(screen.getByRole('form', { name: '대화 이름으로 바로 읽기' }));
+    expect(await form.findByRole('alert')).toHaveTextContent('읽기 결과를 버렸습니다.');
+    expect(form.queryByText(/kmsg가 반환한 관측 건수/)).not.toBeInTheDocument();
+    expect(api.kakaoCatalog).not.toHaveBeenCalled();
     expect(api.kakaoVerify).not.toHaveBeenCalled();
   });
 
-  it('같은 이름의 대화가 둘이면 검색과 목록 모두에서 대상 확정을 막는다', async () => {
-    vi.mocked(api.kakaoCatalog).mockResolvedValue({ choices: [choices[0], { ...choices[1], title: choices[0].title }] });
+  it.each([-1, 4, 1.5])('잘못된 건수 %s는 정상 결과로 표시하지 않는다', async count => {
+    vi.mocked(api.kakaoReadByName).mockResolvedValue({ status: 'READ', count });
     const user = await open();
-    await user.type(screen.getByLabelText('대화 이름으로 찾기'), choices[0].title);
-    await user.click(screen.getByRole('button', { name: '이름으로 대화 찾기' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('같은 이름의 대화가 여러 개입니다.');
-    expect(screen.getByLabelText('읽기 진단할 대화')).toHaveValue('');
-    expect(screen.getAllByRole('option', { name: /이름 중복/ }).every(option => (option as HTMLOptionElement).disabled)).toBe(true);
-    expect(screen.getByRole('button', { name: '선택한 대화 읽기 확인' })).toBeDisabled();
-    expect(api.kakaoVerify).not.toHaveBeenCalled();
+    await user.type(screen.getByLabelText('읽을 대화 이름'), choices[0].title);
+    await user.click(screen.getByRole('checkbox', { name: /입력한 이름이 원하는 1:1 대화/ }));
+    await user.click(screen.getByRole('button', { name: '이름으로 바로 읽기' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('결과를 표시하지 않았습니다.');
+    expect(screen.queryByText('kmsg 이름 지정 읽기 결과')).not.toBeInTheDocument();
   });
 
-  it('창 열기 허용을 해제하면 사전 창 표시 안내로 바꾸고 확인을 다시 받는다', async () => {
+  it('읽기 대기 중 닫으면 늦은 결과와 이름을 복원하지 않는다', async () => {
+    let finish!: (value: KakaoDirectReadResult) => void;
+    vi.mocked(api.kakaoReadByName).mockReturnValue(new Promise(resolve => { finish = resolve; }));
     const user = await open();
-    await user.type(screen.getByLabelText('대화 이름으로 찾기'), choices[0].title);
-    await user.click(screen.getByRole('button', { name: '이름으로 대화 찾기' }));
-    await user.click(screen.getByRole('checkbox', { name: /선택한 대화가 원하는 상대/ }));
-    await user.click(screen.getByRole('checkbox', { name: '읽기 확인 시 선택한 대화창 열기 허용' }));
-    expect(screen.getByRole('checkbox', { name: /선택한 대화가 원하는 상대/ })).not.toBeChecked();
-    expect(screen.getByText('읽기 전에 선택한 1:1 대화를 별도 창으로 열고 화면에 표시해 주세요.')).toBeInTheDocument();
-    await user.click(screen.getByRole('checkbox', { name: /선택한 대화가 원하는 상대/ }));
-    await user.click(screen.getByRole('button', { name: '선택한 대화 읽기 확인' }));
-    expect(api.kakaoVerify).toHaveBeenCalledWith(choices[0].id, false);
-  });
-
-  it('검색어 변경은 이전 선택을 무효화하고 닫으면 검색어도 지운다', async () => {
-    const user = await open();
-    await user.type(screen.getByLabelText('대화 이름으로 찾기'), choices[0].title);
-    await user.click(screen.getByRole('button', { name: '이름으로 대화 찾기' }));
-    await user.click(screen.getByRole('checkbox', { name: /선택한 대화가 원하는 상대/ }));
-    await user.type(screen.getByLabelText('대화 이름으로 찾기'), '추가');
-    expect(screen.getByLabelText('읽기 진단할 대화')).toHaveValue('');
-    expect(screen.getByRole('checkbox', { name: /선택한 대화가 원하는 상대/ })).not.toBeChecked();
-    expect(screen.getByRole('button', { name: '선택한 대화 읽기 확인' })).toBeDisabled();
+    await user.type(screen.getByLabelText('읽을 대화 이름'), choices[0].title);
+    await user.click(screen.getByRole('checkbox', { name: /입력한 이름이 원하는 1:1 대화/ }));
+    await user.click(screen.getByRole('button', { name: '이름으로 바로 읽기' }));
+    expect(screen.getByRole('button', { name: '실제 대화 목록 조회' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: '진단 닫기' }));
+    await act(async () => finish({ status: 'READ', count: 2 }));
     await user.click(screen.getByRole('button', { name: '진단 열기' }));
-    expect(screen.getByLabelText('대화 이름으로 찾기')).toHaveValue('');
-    expect(api.kakaoVerify).not.toHaveBeenCalled();
-  });
-});
-
-
-describe('이름 검색 진행과 조회 오류', () => {
-  it('이름 검색창 바로 아래에서 조회 진행을 알리고 실패와 이름 미일치를 구분한다', async () => {
-    let fail!: (reason: Error) => void;
-    vi.mocked(api.kakaoCatalog).mockReturnValue(new Promise((_, reject) => { fail = reject; }));
-    const user = await open();
-    await user.type(screen.getByLabelText('대화 이름으로 찾기'), choices[0].title);
-    await user.click(screen.getByRole('button', { name: '이름으로 대화 찾기' }));
-    const searchForm = within(screen.getByRole('form', { name: '대화 이름 검색' }));
-    expect(searchForm.getByText(/아직 이름 일치 여부를 확인하지 않았습니다/)).toBeVisible();
-    await act(async () => fail(new Error('대화 목록 조회 시간이 초과되었습니다. 이름 일치 여부는 확인하지 못했습니다.')));
-    expect(searchForm.getByRole('alert')).toHaveTextContent('대화 목록 조회를 완료하지 못해 이름을 검색하지 못했습니다.');
-    expect(searchForm.getByRole('alert')).toHaveTextContent('대화 목록 조회 시간이 초과되었습니다.');
-    expect(screen.queryByText(/이름이 정확히 일치하는 대화가 없습니다/)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('읽기 진단할 대화')).not.toBeInTheDocument();
-    expect(api.kakaoVerify).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('읽을 대화 이름')).toHaveValue('');
+    expect(screen.queryByText('kmsg가 반환한 관측 건수: 2건')).not.toBeInTheDocument();
   });
 
-  it('목록 조회가 성공한 뒤 이름이 없을 때만 검색창 아래에 미일치를 표시한다', async () => {
+  it('별도 목록 조회 실패는 direct 이름 읽기를 막거나 자동 실행하지 않는다', async () => {
+    vi.mocked(api.kakaoCatalog).mockRejectedValue(new Error('대화 목록 조회 시간이 초과되었습니다.'));
     const user = await open();
-    await user.type(screen.getByLabelText('대화 이름으로 찾기'), '일치하지 않는 합성 이름');
-    await user.click(screen.getByRole('button', { name: '이름으로 대화 찾기' }));
-    const searchForm = within(screen.getByRole('form', { name: '대화 이름 검색' }));
-    expect(searchForm.getByRole('alert')).toHaveTextContent('이름이 정확히 일치하는 대화가 없습니다.');
-    expect(searchForm.queryByText(/목록 조회를 완료하지 못해/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '실제 대화 목록 조회' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('대화 목록 조회 시간이 초과되었습니다.');
+    expect(api.kakaoReadByName).not.toHaveBeenCalled();
+    await user.type(screen.getByLabelText('읽을 대화 이름'), choices[0].title);
+    await user.click(screen.getByRole('checkbox', { name: /입력한 이름이 원하는 1:1 대화/ }));
+    await user.click(screen.getByRole('button', { name: '이름으로 바로 읽기' }));
+    expect(await screen.findByText('kmsg가 반환한 관측 건수: 3건')).toBeVisible();
+    expect(api.kakaoCatalog).toHaveBeenCalledTimes(1);
     expect(api.kakaoVerify).not.toHaveBeenCalled();
   });
 });

@@ -86,3 +86,22 @@ def test_catalog_errors_distinguish_failure_from_empty_result(local, monkeypatch
     response = client.post("/api/kakao/catalog", json={})
     assert response.status_code == 409
     assert response.json() == {"detail": public}
+
+
+def test_named_read_needs_session_and_confirmation_but_no_catalog(local, monkeypatch):
+    client, probe = local
+    async def direct_read(name):
+        probe.operations.append(("direct", name))
+        return {"status": "READ", "count": 2}
+    monkeypatch.setattr(probe, "direct_read", direct_read, raising=False)
+    body = {"name": "합성 대화", "one_to_one_confirmed": True}
+    route = "/api/kakao/read-by-name"
+    assert client.post(route, json=body).status_code == 401
+    client.headers["X-Session-Token"] = client.get("/api/session").json()["token"]
+    assert client.post(route, json={**body, "one_to_one_confirmed": False}).status_code == 409
+    assert client.post(route, json={**body, "one_to_one_confirmed": 1}).status_code == 422
+    result = client.post(route, json=body)
+    assert result.json() == {"status": "READ", "count": 2}
+    assert result.headers["cache-control"] == "no-store"
+    assert probe.operations == [("direct", "합성 대화")]
+    assert client.get("/api/state").json()["jobs"] == []

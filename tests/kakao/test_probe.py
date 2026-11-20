@@ -24,6 +24,36 @@ mode = (root / 'mode').read_text() if (root / 'mode').exists() else 'ok'
 def record(value):
     with (root / 'trace').open('a') as stream:
         stream.write(json.dumps(value) + '\\n')
+if sys.argv[1:5] == ['read', '--json', '--limit', '3'] and len(sys.argv) == 6:
+    (root / 'pid').write_text(str(os.getpid()))
+    record({'kind': 'direct_read', 'argv': sys.argv[1:]})
+    assert sys.stdin.read() == ''
+    print('SYNTHETIC_PRIVATE_DIRECT_STDERR', file=sys.stderr, flush=True)
+    if mode == 'hang':
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        time.sleep(30)
+    if mode == 'bad':
+        print('SYNTHETIC_PRIVATE_NOT_JSON')
+        sys.exit(0)
+    if mode == 'error':
+        print('SYNTHETIC_PRIVATE_ERROR')
+        sys.exit(1)
+    if mode == 'oversize':
+        print('SYNTHETIC_PRIVATE' * 10000)
+        sys.exit(0)
+    target = sys.argv[5]
+    payload = {'chat': target, 'fetched_at': datetime.now(timezone.utc).isoformat(),
+               'count': 1, 'messages': [{'author': '(me)', 'body': 'SYNTHETIC_PRIVATE_BODY'}]}
+    if mode == 'mismatch':
+        payload.update(chat=target + ' other', messages='SYNTHETIC_PRIVATE_INVALID_MESSAGES')
+    if mode == 'bad_count':
+        payload['count'] = 4
+    if mode == 'bad_message':
+        payload['messages'] = [{'body': 42}]
+    if mode == 'mcp_shape':
+        payload['ok'] = True
+    print(json.dumps(payload))
+    sys.exit(0)
 if sys.argv[1:] == ['chats', '--json', '--limit', '1000']:
     (root / 'pid').write_text(str(os.getpid()))
     record({'kind': 'catalog'})
@@ -300,3 +330,79 @@ async def test_installed_only_checks_absolute_executable(tmp_path, monkeypatch):
     assert Probe('kmsg; false').installed() is False
     with pytest.raises(ReadError, match='BINARY_UNAVAILABLE'):
         await Probe(str(tmp_path / 'missing')).catalog()
+
+
+async def test_direct_read_exact_argv_without_catalog_or_state_changes(fake, caplog, capsys):
+    probe = Probe(str(fake))
+    probe._choices, probe._fingerprint, probe._expires = {'keep': 'existing'}, 'fingerprint', 123
+    result = await probe.direct_read('  Synthetic direct room  ')
+    assert result == {'status': 'READ', 'count': 1}
+    assert trace(fake) == [{'kind': 'direct_read', 'argv': ['read', '--json', '--limit', '3', 'Synthetic direct room']}]
+    assert (probe._choices, probe._fingerprint, probe._expires) == ({'keep': 'existing'}, 'fingerprint', 123)
+    assert 'PRIVATE' not in repr(result) + caplog.text + str(capsys.readouterr())
+    assert 'Synthetic direct room' not in repr(probe.__dict__)
+
+
+async def test_direct_read_shell_characters_remain_one_literal_argument(fake):
+    sentinel = fake.parent / 'never-created'
+    name = f'Synthetic; $(touch {sentinel})'
+    assert await Probe(str(fake)).direct_read(name) == {'status': 'READ', 'count': 1}
+    assert trace(fake)[0]['argv'][-1] == name
+    assert not sentinel.exists()
+
+
+@pytest.mark.parametrize('name', [None, 1, '', '  ', '-x', ' --json', 'a\nb', 'a\tb', 'a\x00b',
+                                  'a\u2028b', 'a\u200db', 'a' * 501])
+async def test_direct_read_rejects_invalid_names_before_ui(fake, name):
+    with pytest.raises(ReadError, match='INVALID_CHAT_NAME'):
+        await Probe(str(fake)).direct_read(name)
+    assert trace(fake) == []
+
+
+@pytest.mark.parametrize('mode,code', [('mismatch', 'TITLE_MISMATCH'), ('bad', 'DIRECT_READ_FAILED'),
+                                      ('error', 'DIRECT_READ_FAILED'), ('oversize', 'DIRECT_READ_TOO_LARGE'),
+                                      ('bad_count', 'DIRECT_READ_FAILED'), ('bad_message', 'DIRECT_READ_FAILED'),
+                                      ('mcp_shape', 'DIRECT_READ_FAILED')])
+async def test_direct_read_validates_title_before_messages_and_sanitizes_failures(fake, mode, code, caplog, capsys):
+    (fake.parent / 'mode').write_text(mode)
+    with pytest.raises(ReadError, match=code) as error:
+        await Probe(str(fake)).direct_read('Synthetic direct room')
+    assert len(trace(fake)) == 1 and trace(fake)[0]['kind'] == 'direct_read'
+    assert 'PRIVATE' not in str(error.value) + caplog.text + str(capsys.readouterr())
+
+
+async def test_direct_read_timeout_cleans_process_without_retry(fake):
+    (fake.parent / 'mode').write_text('hang')
+    probe = Probe(str(fake), timeout_seconds=2)
+    with pytest.raises(ReadError, match='DIRECT_READ_TIMEOUT'):
+        await probe.direct_read('Synthetic direct room')
+    assert len(trace(fake)) == 1
+    with pytest.raises(ProcessLookupError):
+        os.kill(int((fake.parent / 'pid').read_text()), 0)
+    (fake.parent / 'mode').write_text('ok')
+    assert (await probe.direct_read('Synthetic direct room'))['count'] == 1
+
+
+async def test_direct_read_obeys_shared_os_lock(fake):
+    with module._ui_lock():
+        with pytest.raises(ReadError, match='PROBE_BUSY'):
+            await Probe(str(fake)).direct_read('Synthetic direct room')
+    assert trace(fake) == []
+
+
+async def test_direct_read_cancel_kills_process_and_unlocks(fake):
+    (fake.parent / 'mode').write_text('hang')
+    probe = Probe(str(fake))
+    task = asyncio.create_task(probe.direct_read('Synthetic direct room'))
+    for _ in range(300):
+        if (fake.parent / 'pid').exists():
+            break
+        await asyncio.sleep(.01)
+    assert (fake.parent / 'pid').exists()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    with pytest.raises(ProcessLookupError):
+        os.kill(int((fake.parent / 'pid').read_text()), 0)
+    (fake.parent / 'mode').write_text('ok')
+    assert (await probe.direct_read('Synthetic direct room'))['count'] == 1

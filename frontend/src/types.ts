@@ -40,3 +40,5 @@ export interface KakaoReadResult {
   new_count: number;
   status: string;
 }
+
+export interface KakaoDirectReadResult { status: 'READ'; count: number }

@@ -5,7 +5,7 @@ import { App } from './App';
 import { api } from './api';
 import type { Job, RuntimeState } from './types';
 
-vi.mock('./api', () => ({ api: { state: vi.fn(), reconnect: vi.fn(), start: vi.fn(), message: vi.fn(), advance: vi.fn(), pause: vi.fn(), detail: vi.fn(), storage: vi.fn(), deleteBody: vi.fn(), kakaoStatus: vi.fn(), kakaoCatalog: vi.fn(), kakaoVerify: vi.fn() } }));
+vi.mock('./api', () => ({ api: { state: vi.fn(), reconnect: vi.fn(), start: vi.fn(), message: vi.fn(), advance: vi.fn(), pause: vi.fn(), detail: vi.fn(), storage: vi.fn(), deleteBody: vi.fn(), kakaoStatus: vi.fn(), kakaoCatalog: vi.fn(), kakaoVerify: vi.fn(), kakaoReadByName: vi.fn() } }));
 
 const base: RuntimeState = {
   transport: 'mock', mode: 'off', live_send_enabled: false, now: '2026-11-20T03:00:00Z',

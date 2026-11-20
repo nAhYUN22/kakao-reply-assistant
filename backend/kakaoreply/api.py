@@ -49,6 +49,11 @@ class ReadCheckInput(StrictInput):
     allow_open_window: bool = False
 
 
+class NamedReadInput(StrictInput):
+    name: str = Field(min_length=1, max_length=200)
+    one_to_one_confirmed: bool
+
+
 def create_app(db_path: str | None = None, engine: Engine | None = None, *, probe: Probe | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI):
@@ -115,6 +120,8 @@ def create_app(db_path: str | None = None, engine: Engine | None = None, *, prob
         public_codes = {
             "BINARY_UNAVAILABLE", "PROBE_BUSY", "CATALOG_LIMIT_REACHED", "CATALOG_FAILED",
             "CATALOG_TIMEOUT", "CATALOG_TOO_LARGE",
+            "INVALID_CHAT_NAME", "TITLE_MISMATCH", "DIRECT_READ_TIMEOUT",
+            "DIRECT_READ_FAILED", "DIRECT_READ_TOO_LARGE",
             "AMBIGUOUS_TARGET", "BINDING_CHANGED", "BINDING_REQUIRES_CONFIRMATION",
             "MCP_READ_FAILED", "MCP_CONNECTION_FAILED", "INVALID_CATALOG",
             "READ_CAPABILITY_MISSING", "UNSUPPORTED_READ_SCHEMA", "READ_FAILED",
@@ -133,6 +140,12 @@ def create_app(db_path: str | None = None, engine: Engine | None = None, *, prob
     @application.post("/api/kakao/catalog")
     async def kakao_catalog(body: EmptyInput, request: Request):
         return await request.app.state.probe.catalog()
+
+    @application.post("/api/kakao/read-by-name")
+    async def kakao_read_by_name(body: NamedReadInput, request: Request):
+        if not body.one_to_one_confirmed:
+            raise ReadError("BINDING_REQUIRES_CONFIRMATION")
+        return await request.app.state.probe.direct_read(body.name)
 
     @application.post("/api/kakao/verify")
     async def kakao_verify(body: ReadCheckInput, request: Request):

@@ -24,10 +24,11 @@ import time
 import unicodedata
 
 from .mcp_client import McpReadClient
-from .observation import BindingVerifier, ReadError, SnapshotScanner, _catalog
+from .observation import BindingVerifier, ReadError, SnapshotScanner, _catalog, parse_snapshot
 
 CATALOG_LIMIT = 1000
 MAX_CATALOG_BYTES = 512_000
+MAX_DIRECT_READ_BYTES = 128_000
 DEFAULT_MCP_TIMEOUT_SECONDS = 12
 DEFAULT_CATALOG_TIMEOUT_SECONDS = 30
 _LOCK_PATH = Path('/tmp') / f'kakaoreply-kakao-ui-{os.getuid()}.lock'
@@ -39,6 +40,8 @@ _SAFE_ERRORS = frozenset({
     'READ_CAPABILITY_MISSING', 'UNSUPPORTED_READ_SCHEMA', 'UNSUPPORTED_TOOL_PAGINATION',
     'MCP_CONNECTION_FAILED', 'MCP_READ_FAILED', 'CONFLICTING_PAYLOAD', 'PAYLOAD_TOO_LARGE',
     'INVALID_TIMESTAMP', 'NOT_CONNECTED', 'PROBE_FAILED',
+    'INVALID_CHAT_NAME', 'TITLE_MISMATCH', 'DIRECT_READ_TIMEOUT',
+    'DIRECT_READ_FAILED', 'DIRECT_READ_TOO_LARGE',
 })
 
 
@@ -186,42 +189,86 @@ class Probe:
         except (ReadError, OSError):
             return False
 
-    async def _read_catalog(self, binary: str) -> dict:
+    async def _run_cli_json(self, binary: str, arguments: tuple[str, ...], *,
+                            timeout: float, max_bytes: int, operation: str):
+        """Internal bounded runner; public methods supply fixed command shapes."""
         process = None
         try:
-            async with asyncio.timeout(self._catalog_timeout):
+            async with asyncio.timeout(timeout):
                 process = await asyncio.create_subprocess_exec(
-                    binary, 'chats', '--json', '--limit', str(CATALOG_LIMIT),
+                    binary, *arguments,
                     stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
                     env={**os.environ, 'KMSG_TRACE_DEFAULT': 'false', 'KMSG_DEFAULT_DEEP_RECOVERY': 'false'})
                 chunks = bytearray()
                 while True:
-                    chunk = await process.stdout.read(min(65536, MAX_CATALOG_BYTES + 1 - len(chunks)))
+                    chunk = await process.stdout.read(min(65536, max_bytes + 1 - len(chunks)))
                     if not chunk:
                         break
                     chunks.extend(chunk)
-                    if len(chunks) > MAX_CATALOG_BYTES:
-                        raise ReadError('CATALOG_TOO_LARGE')
+                    if len(chunks) > max_bytes:
+                        raise ReadError(f'{operation}_TOO_LARGE')
                 if await process.wait() != 0:
-                    raise ReadError('CATALOG_FAILED')
-            raw = json.loads(chunks, object_pairs_hook=_json_pairs)
-            rows = _catalog(raw)
-            if len(rows) >= CATALOG_LIMIT:
-                raise ReadError('CATALOG_LIMIT_REACHED')
-            # Drop previews and all unknown fields before caching or returning.
-            return {'count': len(rows), 'chats': [{'chat_id': chat_id, 'title': title} for chat_id, title in rows]}
+                    raise ReadError(f'{operation}_FAILED')
+            try:
+                return json.loads(chunks, object_pairs_hook=_json_pairs)
+            except Exception:
+                raise ReadError(f'{operation}_FAILED') from None
         except TimeoutError:
-            raise ReadError('CATALOG_TIMEOUT') from None
+            raise ReadError(f'{operation}_TIMEOUT') from None
         except asyncio.CancelledError:
             raise
         except ReadError:
             raise
         except Exception:
-            raise ReadError('CATALOG_FAILED') from None
+            raise ReadError(f'{operation}_FAILED') from None
         finally:
             if process is not None:
                 await _stop_process(process)
+
+    async def _read_catalog(self, binary: str) -> dict:
+        raw = await self._run_cli_json(binary, ('chats', '--json', '--limit', str(CATALOG_LIMIT)),
+                                       timeout=self._catalog_timeout, max_bytes=MAX_CATALOG_BYTES, operation='CATALOG')
+        rows = _catalog(raw)
+        if len(rows) >= CATALOG_LIMIT:
+            raise ReadError('CATALOG_LIMIT_REACHED')
+        # Drop previews and all unknown fields before caching or returning.
+        return {'count': len(rows), 'chats': [{'chat_id': chat_id, 'title': title} for chat_id, title in rows]}
+
+    async def direct_read(self, name: str) -> dict:
+        """One explicit foreground CLI read, without catalog or binding claims.
+
+        The actual returned title must match exactly, but this cannot distinguish
+        different rooms with the same title. No event/newness/author inference.
+        """
+        try:
+            if (not isinstance(name, str) or not 1 <= len(name) <= 500
+                    or any(unicodedata.category(character).startswith('C')
+                           or unicodedata.category(character) in {'Zl', 'Zp'} for character in name)):
+                raise ReadError('INVALID_CHAT_NAME')
+            target = name.strip()
+            if not target or target.startswith('-'):
+                raise ReadError('INVALID_CHAT_NAME')
+            with _ui_lock():
+                raw = await self._run_cli_json(self._binary(), ('read', '--json', '--limit', '3', target),
+                                              timeout=self._timeout, max_bytes=MAX_DIRECT_READ_BYTES,
+                                              operation='DIRECT_READ')
+                if not isinstance(raw, dict):
+                    raise ReadError('DIRECT_READ_FAILED')
+                # Check the actual window title before touching message fields.
+                if raw.get('chat') != target:
+                    raise ReadError('TITLE_MISMATCH')
+                if 'ok' in raw or type(raw.get('count')) is not int or not 0 <= raw['count'] <= 3:
+                    raise ReadError('DIRECT_READ_FAILED')
+                try:
+                    snapshot = parse_snapshot({'ok': True, **raw})
+                except Exception:
+                    raise ReadError('DIRECT_READ_FAILED') from None
+                return {'status': 'READ', 'count': len(snapshot.rows)}
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            raise _safe_error(error) from None
 
     async def catalog(self) -> dict:
         try:

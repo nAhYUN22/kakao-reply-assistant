@@ -1,8 +1,12 @@
-import type { JobDetail, MessageOrigin, RuntimeState, StorageStatus, KakaoStatus, KakaoChoice, KakaoReadResult } from './types';
+import type { JobDetail, MessageOrigin, RuntimeState, StorageStatus, KakaoStatus, KakaoChoice, KakaoReadResult, KakaoDirectReadResult } from './types';
 
 let session: Promise<string> | undefined;
 
 const diagnosticErrors: Record<string, string> = {
+  DIRECT_READ_TIMEOUT: '이름으로 읽기 요청 시간이 초과되었습니다. 읽기 결과를 확인하지 못했습니다.',
+  DIRECT_READ_FAILED: '이름으로 대화를 읽지 못했습니다. 원인은 확인되지 않았습니다. 이름과 카카오톡 상태를 확인해 주세요.',
+  TITLE_MISMATCH: 'kmsg가 반환한 대화 제목이 입력한 이름과 달라 읽기 결과를 버렸습니다. 정확한 대화 이름을 확인해 주세요.',
+  INVALID_CHAT_NAME: '대화 이름이 비어 있거나 허용되지 않는 형식입니다. 카카오톡에 표시된 이름을 입력해 주세요.',
   PROBE_BUSY: '다른 읽기 진단이 진행 중입니다. 잠시 후 다시 시도해 주세요.',
   BINARY_UNAVAILABLE: 'kmsg 실행 파일을 찾지 못했습니다. 설치 후 서버에서 실행 파일을 찾을 수 있는지 확인해 주세요.',
   AMBIGUOUS_TARGET: '대상을 명확하게 구분할 수 없습니다. 대화 목록과 원하는 1:1 대상을 다시 확인해 주세요.',
@@ -24,6 +28,7 @@ async function json<T>(path: string, init: RequestInit = {}, timeoutMs = 15000):
     throw new Error('로컬 서버에 연결하지 못했습니다. 서버 실행 상태를 확인한 뒤 다시 시도해 주세요.');
   }
   if (!response.ok) {
+    if (path === '/api/kakao/read-by-name' && (response.status === 404 || response.status === 405)) throw new Error('이름으로 바로 읽기 API가 없는 서버입니다. 현재 서버를 시작한 터미널에서 재시작해 주세요.');
     // Only fixed, recognized reason codes become UI text; never echo raw response data.
     if (path.startsWith('/api/kakao/')) {
       let detail: unknown;
@@ -54,6 +59,7 @@ async function request<T>(path: string, body?: unknown, method?: 'DELETE', timeo
 
 export const api = {
   kakaoStatus: () => request<KakaoStatus>('/api/kakao/status'),
+  kakaoReadByName: (name: string) => request<KakaoDirectReadResult>('/api/kakao/read-by-name', { name, one_to_one_confirmed: true }, undefined, 120000),
   kakaoCatalog: () => request<{ choices: KakaoChoice[] }>('/api/kakao/catalog', {}, undefined, 120000),
   kakaoVerify: (id: string, allowOpenWindow = false) => request<KakaoReadResult>('/api/kakao/verify', { id, one_to_one_confirmed: true, allow_open_window: allowOpenWindow }, undefined, 120000),
   state: () => request<RuntimeState>('/api/state'),

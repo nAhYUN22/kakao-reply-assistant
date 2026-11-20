@@ -101,3 +101,29 @@ it('창 열기 허용은 명시적으로 true를 선택한 읽기 요청에만 �
   await api.kakaoVerify('synthetic-room', true);
   expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ id: 'synthetic-room', one_to_one_confirmed: true, allow_open_window: true });
 });
+
+
+describe('이름 지정 직접 읽기 API', () => {
+  it('이름과 명시 확인을 인증된 direct endpoint에만 보내며 목록·verify는 호출하지 않는다', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'synthetic-session-token' })).mockResolvedValueOnce(response({ status: 'READ', count: 3 }));
+    vi.stubGlobal('fetch', fetcher);
+    const { api } = await import('./api');
+    await expect(api.kakaoReadByName('합성 테스트 대화')).resolves.toEqual({ status: 'READ', count: 3 });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[1][0]).toBe('/api/kakao/read-by-name');
+    expect(fetcher.mock.calls[1][1]).toMatchObject({ method: 'POST', headers: { 'X-Session-Token': 'synthetic-session-token' } });
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ name: '합성 테스트 대화', one_to_one_confirmed: true });
+  });
+
+  it.each([['DIRECT_READ_TIMEOUT', '요청 시간이 초과되었습니다'], ['DIRECT_READ_FAILED', '원인은 확인되지 않았습니다'], ['TITLE_MISMATCH', '읽기 결과를 버렸습니다'], ['INVALID_CHAT_NAME', '대화 이름이 비어 있거나']])('direct 오류 %s를 원문 없이 한국어로 표시한다', async (code, expected) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response({ token: 'synthetic-session-token' })).mockResolvedValueOnce(response({ detail: code }, 409)));
+    const { api } = await import('./api');
+    await expect(api.kakaoReadByName('합성 테스트 대화')).rejects.toThrow(expected);
+  });
+
+  it('direct API가 없는 기존 서버는 재시작 안내를 표시한다', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response({ token: 'synthetic-session-token' })).mockResolvedValueOnce(response({ detail: 'Not Found' }, 404)));
+    const { api } = await import('./api');
+    await expect(api.kakaoReadByName('합성 테스트 대화')).rejects.toThrow('현재 서버를 시작한 터미널에서 재시작해 주세요');
+  });
+});
