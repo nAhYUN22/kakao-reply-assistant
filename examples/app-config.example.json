@@ -1,0 +1,35 @@
+{
+  "$schema": "../schemas/app-config.schema.json",
+  "transport": "mock",
+  "mode": "off",
+  "live_send_enabled": false,
+  "timezone": "Asia/Seoul",
+  "active_windows": [],
+  "reply_delay": 600,
+  "settle": 20,
+  "human_cooldown": 900,
+  "poll": 5,
+  "max_incoming_age": 1800,
+  "max_autoreplies_session": 3,
+  "session_gap": 1800,
+  "max_per_hour": 6,
+  "max_per_day": 20,
+  "max_chars": 240,
+  "llm_timeout": 30,
+  "llm_retries": 1,
+  "disclosure_mode": "per_message",
+  "disclosure_suffix": "— 부재중 AI 답장",
+  "provider": {
+    "kind": "mock",
+    "base_url": null,
+    "model": null,
+    "credential_ref": null,
+    "context_token_budget": 4096
+  },
+  "storage": {
+    "raw_retention_days": 7,
+    "audit_retention_days": 30,
+    "sensitive_encryption": "aead",
+    "key_store": "ephemeral_mock"
+  }
+}

@@ -1,0 +1,34 @@
+[
+  {
+    "action": "reply",
+    "reply_text": "회의가 많아서 바쁘셨겠어요. 잠깐이라도 편히 쉬셨으면 좋겠어요.",
+    "reason_codes": [
+      "ROUTINE_REPLY"
+    ],
+    "used_fact_ids": []
+  },
+  {
+    "action": "hold",
+    "reply_text": "",
+    "reason_codes": [
+      "MISSING_FACT"
+    ],
+    "used_fact_ids": []
+  },
+  {
+    "action": "notify_owner",
+    "reply_text": "",
+    "reason_codes": [
+      "COMMITMENT_REQUEST"
+    ],
+    "used_fact_ids": []
+  },
+  {
+    "action": "no_reply",
+    "reply_text": "",
+    "reason_codes": [
+      "NO_REPLY_NEEDED"
+    ],
+    "used_fact_ids": []
+  }
+]

@@ -1,0 +1,146 @@
+[
+  {
+    "event_id": "10fc0d69-e689-5981-9347-27807e975a79",
+    "binding_id": "d35b56f7-8bfd-5f40-959b-90013d796854",
+    "origin": "partner",
+    "source": "mock",
+    "observed_at": "2026-11-20T04:00:00Z",
+    "source_time": "2026-11-19T05:00:00Z",
+    "sequence": 0,
+    "text": "[합성] 어제 이야기한 책이 도착했어요.",
+    "confidence": {
+      "author": "verified",
+      "newness": "baseline",
+      "time": "source"
+    },
+    "authorship": "human_verified"
+  },
+  {
+    "event_id": "22cd84cb-0a0d-57f5-81c5-94287ca0be27",
+    "binding_id": "d35b56f7-8bfd-5f40-959b-90013d796854",
+    "origin": "partner",
+    "source": "mock",
+    "observed_at": "2026-11-20T05:00:00Z",
+    "source_time": null,
+    "sequence": 1,
+    "text": "[합성] 오늘 회의가 많았어요.",
+    "confidence": {
+      "author": "verified",
+      "newness": "verified",
+      "time": "observation_only"
+    },
+    "authorship": "human_verified"
+  },
+  {
+    "event_id": "4b01baa6-d0a5-52f1-8f32-34525f8f52e6",
+    "binding_id": "d35b56f7-8bfd-5f40-959b-90013d796854",
+    "origin": "partner",
+    "source": "mock",
+    "observed_at": "2026-11-20T05:00:10Z",
+    "source_time": null,
+    "sequence": 2,
+    "text": "[합성] 이제 잠깐 쉬려고요.",
+    "confidence": {
+      "author": "verified",
+      "newness": "verified",
+      "time": "observation_only"
+    },
+    "authorship": "human_verified"
+  },
+  {
+    "event_id": "ee99f5ca-b1c0-512a-bc6e-7f3cadc58e21",
+    "binding_id": "d35b56f7-8bfd-5f40-959b-90013d796854",
+    "origin": "owner",
+    "source": "mock",
+    "observed_at": "2026-11-20T05:05:00Z",
+    "source_time": null,
+    "sequence": 3,
+    "text": "[합성] 고생 많으셨어요. 저도 잠깐 쉬고 있어요.",
+    "confidence": {
+      "author": "verified",
+      "newness": "verified",
+      "time": "observation_only"
+    },
+    "authorship": "human_verified"
+  },
+  {
+    "event_id": "3874610f-f117-554a-aed4-77233454ed14",
+    "binding_id": "d35b56f7-8bfd-5f40-959b-90013d796854",
+    "origin": "partner",
+    "source": "mock",
+    "observed_at": "2026-11-20T05:30:00Z",
+    "source_time": null,
+    "sequence": 4,
+    "text": "[합성] 네.",
+    "confidence": {
+      "author": "verified",
+      "newness": "verified",
+      "time": "observation_only"
+    },
+    "authorship": "human_verified"
+  },
+  {
+    "event_id": "5a988134-0ead-5bc8-b5a0-ca6ab3a8975b",
+    "binding_id": "d35b56f7-8bfd-5f40-959b-90013d796854",
+    "origin": "partner",
+    "source": "mock",
+    "observed_at": "2026-11-20T05:30:00Z",
+    "source_time": null,
+    "sequence": 5,
+    "text": "[합성] 네.",
+    "confidence": {
+      "author": "verified",
+      "newness": "verified",
+      "time": "observation_only"
+    },
+    "authorship": "human_verified"
+  },
+  {
+    "event_id": "e76ceca7-22d2-586a-b17c-73c8539b2657",
+    "binding_id": "d35b56f7-8bfd-5f40-959b-90013d796854",
+    "origin": "unknown",
+    "source": "mock",
+    "observed_at": "2026-11-20T05:31:00Z",
+    "source_time": null,
+    "sequence": 6,
+    "text": "[합성] 작성자가 확실하지 않은 메시지입니다.",
+    "confidence": {
+      "author": "ambiguous",
+      "newness": "verified",
+      "time": "observation_only"
+    },
+    "authorship": "unknown"
+  },
+  {
+    "event_id": "795a725e-8e7c-5bfc-9cb5-64068a619785",
+    "binding_id": "d35b56f7-8bfd-5f40-959b-90013d796854",
+    "origin": "bot",
+    "source": "mock",
+    "observed_at": "2026-11-20T06:10:00Z",
+    "source_time": null,
+    "sequence": 7,
+    "text": "[합성] 잠깐이라도 편히 쉬셨으면 좋겠어요.\n— 부재중 AI 답장",
+    "confidence": {
+      "author": "verified",
+      "newness": "verified",
+      "time": "observation_only"
+    },
+    "authorship": "bot_confirmed"
+  },
+  {
+    "event_id": "00f2b703-d186-5655-9474-4f9f8a18a015",
+    "binding_id": "d35b56f7-8bfd-5f40-959b-90013d796854",
+    "origin": "partner",
+    "source": "mock",
+    "observed_at": "2026-11-20T06:11:00Z",
+    "source_time": null,
+    "sequence": 8,
+    "text": "[합성] 조금 쉬니까 괜찮아졌어요.",
+    "confidence": {
+      "author": "verified",
+      "newness": "verified",
+      "time": "observation_only"
+    },
+    "authorship": "human_verified"
+  }
+]

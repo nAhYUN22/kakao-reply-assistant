@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kakaoreply:reply-decision:v1",
+  "title": "LLM proposal only; no recipient or send permission",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action", "reply_text", "reason_codes", "used_fact_ids"],
+  "properties": {
+    "action": {"enum": ["reply", "hold", "notify_owner", "no_reply"]},
+    "reply_text": {"type": "string", "maxLength": 1000},
+    "reason_codes": {
+      "type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true,
+      "items": {"enum": ["ROUTINE_REPLY", "ACKNOWLEDGEMENT", "MISSING_FACT", "CONFLICTING_FACTS", "EXPIRED_FACT", "COMMITMENT_REQUEST", "RELATIONSHIP_DECISION", "MONEY_REQUEST", "URGENT_OWNER_ATTENTION", "UNSUPPORTED_CONTENT", "UNTRUSTED_INSTRUCTION", "NO_REPLY_NEEDED", "INVALID_CONTEXT"]}
+    },
+    "used_fact_ids": {"type": "array", "maxItems": 20, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 100}}
+  },
+  "allOf": [
+    {"if": {"properties": {"action": {"const": "reply"}}}, "then": {"properties": {"reply_text": {"minLength": 1}}}},
+    {"if": {"properties": {"action": {"enum": ["hold", "no_reply"]}}}, "then": {"properties": {"reply_text": {"const": ""}}}}
+  ]
+}

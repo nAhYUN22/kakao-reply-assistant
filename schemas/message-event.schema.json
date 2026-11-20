@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kakaoreply:message-event:v1",
+  "title": "Normalized decrypted in-memory message; not a plaintext storage format",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "binding_id", "origin", "source", "observed_at", "source_time", "sequence", "text", "confidence", "authorship"],
+  "properties": {
+    "event_id": {"type": "string", "minLength": 1, "maxLength": 100},
+    "binding_id": {"type": "string", "minLength": 1, "maxLength": 100},
+    "origin": {"enum": ["partner", "owner", "bot", "system", "unknown"]},
+    "source": {"enum": ["mock", "live_poll", "live_watch", "history_import"]},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "source_time": {"type": ["string", "null"], "format": "date-time"},
+    "sequence": {"type": "integer", "minimum": 0},
+    "text": {"type": "string", "maxLength": 10000},
+    "authorship": {"enum": ["human_verified", "bot_confirmed", "unknown", "not_applicable"]},
+    "confidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["author", "newness", "time"],
+      "properties": {
+        "author": {"enum": ["verified", "ambiguous", "system"]},
+        "newness": {"enum": ["verified", "baseline", "uncertain"]},
+        "time": {"enum": ["source", "observation_only", "missing"]}
+      }
+    }
+  }
+}

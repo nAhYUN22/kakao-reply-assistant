@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kakaoreply:app-config:v1",
+  "title": "KakaoReply configuration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["transport", "mode", "live_send_enabled", "timezone", "active_windows", "reply_delay", "settle", "human_cooldown", "poll", "max_incoming_age", "max_autoreplies_session", "session_gap", "max_per_hour", "max_per_day", "max_chars", "llm_timeout", "llm_retries", "disclosure_mode", "disclosure_suffix", "provider", "storage"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "transport": {"enum": ["mock", "kmsg_mcp", "kmsg_cli"]},
+    "mode": {"enum": ["off", "draft", "auto"]},
+    "live_send_enabled": {"type": "boolean"},
+    "timezone": {"type": "string", "minLength": 1, "maxLength": 100},
+    "active_windows": {
+      "type": "array", "maxItems": 28,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["days", "start", "end"],
+        "properties": {
+          "days": {"type": "array", "minItems": 1, "maxItems": 7, "uniqueItems": true, "items": {"type": "integer", "minimum": 1, "maximum": 7}},
+          "start": {"type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"},
+          "end": {"type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"}
+        }
+      }
+    },
+    "reply_delay": {"type": "integer", "minimum": 30, "maximum": 86400},
+    "settle": {"type": "integer", "minimum": 1, "maximum": 300},
+    "human_cooldown": {"type": "integer", "minimum": 0, "maximum": 86400},
+    "poll": {"type": "number", "minimum": 1, "maximum": 60},
+    "max_incoming_age": {"type": "integer", "minimum": 60, "maximum": 172800},
+    "max_autoreplies_session": {"type": "integer", "minimum": 1, "maximum": 20},
+    "session_gap": {"type": "integer", "minimum": 60, "maximum": 86400},
+    "max_per_hour": {"type": "integer", "minimum": 1, "maximum": 60},
+    "max_per_day": {"type": "integer", "minimum": 1, "maximum": 200},
+    "max_chars": {"type": "integer", "minimum": 40, "maximum": 1000},
+    "llm_timeout": {"type": "integer", "minimum": 5, "maximum": 120},
+    "llm_retries": {"type": "integer", "minimum": 0, "maximum": 2},
+    "disclosure_mode": {"const": "per_message"},
+    "disclosure_suffix": {"const": "— 부재중 AI 답장"},
+    "provider": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "base_url", "model", "credential_ref", "context_token_budget"],
+      "properties": {
+        "kind": {"enum": ["mock", "local", "external"]},
+        "base_url": {"type": ["string", "null"]},
+        "model": {"type": ["string", "null"]},
+        "credential_ref": {"type": ["string", "null"]},
+        "context_token_budget": {"type": "integer", "minimum": 512, "maximum": 32768}
+      }
+    },
+    "storage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["raw_retention_days", "audit_retention_days", "sensitive_encryption", "key_store"],
+      "properties": {
+        "raw_retention_days": {"type": "integer", "minimum": 1, "maximum": 365},
+        "audit_retention_days": {"type": "integer", "minimum": 1, "maximum": 365},
+        "sensitive_encryption": {"const": "aead"},
+        "key_store": {"enum": ["keychain", "ephemeral_mock"]}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"transport": {"enum": ["kmsg_mcp", "kmsg_cli"]}}},
+      "then": {"properties": {"storage": {"properties": {"key_store": {"const": "keychain"}}}}}
+    },
+    {
+      "if": {"properties": {"live_send_enabled": {"const": true}}},
+      "then": {"properties": {
+        "transport": {"enum": ["kmsg_mcp", "kmsg_cli"]},
+        "mode": {"const": "auto"},
+        "active_windows": {"minItems": 1},
+        "provider": {"properties": {"kind": {"enum": ["local", "external"]}}}
+      }}
+    }
+  ]
+}
